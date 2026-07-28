@@ -1,4 +1,4 @@
-import { odata, RestError, TableClient, type TableEntity } from '@azure/data-tables';
+import { RestError, TableClient, type TableEntity } from '@azure/data-tables';
 import { DefaultAzureCredential } from '@azure/identity';
 import type { StorageConfig } from '../config.js';
 import type { RoomRecord, StoredRoom } from './record.js';
@@ -160,7 +160,7 @@ export class TableRoomStore implements RoomStore {
     await this.#ensure();
     const out: string[] = [];
     const iterator = this.#rooms.listEntities<RoomEntity>({
-      queryOptions: { filter: odata`PartitionKey eq 'room' and expiresAt lt ${now}` },
+      queryOptions: { filter: `PartitionKey eq 'room' and expiresAt lt ${doubleLiteral(now)}` },
     });
     for await (const entity of iterator) {
       out.push(entity.rowKey!);
@@ -195,6 +195,16 @@ function toEntity(record: RoomRecord): TableEntity<Omit<RoomEntity, 'etag'>> {
 
 function statusCode(error: unknown): number | undefined {
   return error instanceof RestError ? error.statusCode : undefined;
+}
+
+/**
+ * Epoch milliseconds are stored as `Edm.Double`, and a bare integer in an OData
+ * filter is parsed as `Edm.Int32` - which any millisecond timestamp overflows.
+ * Emitting an explicit double literal keeps the comparison well-typed.
+ */
+function doubleLiteral(value: number): string {
+  if (!Number.isFinite(value)) throw new TypeError(`not a finite number: ${String(value)}`);
+  return `${Math.trunc(value).toString()}.0`;
 }
 
 function isNotFound(error: unknown): boolean {
