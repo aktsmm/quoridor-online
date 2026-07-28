@@ -53,6 +53,7 @@ export function createApp(parts: AppParts): App {
     status: 'ok',
     uptimeMs: Date.now() - startedAt,
     connections: hub.connectionCount,
+    activeGames: hub.activeGameCount,
   }));
   fastify.get('/', () => ({ service: 'quoridor-server' }));
 

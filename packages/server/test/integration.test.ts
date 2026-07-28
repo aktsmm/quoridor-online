@@ -258,6 +258,30 @@ describe('websocket vertical slice', () => {
     expect(app.hub.connectionCount).toBe(0);
   });
 
+  it('reports games in progress so a deploy can wait for them', async () => {
+    const store = new MemoryRoomStore();
+    const { app, url } = await startApp(store);
+    const health = `${url.replace('ws://', 'http://')}/health`;
+
+    const host = await connect(url);
+    host.send({ type: 'room.create', playerCount: 2, aiLevel: 'easy', fillWithCpu: true, name: 'Host' });
+    await host.nextOfType('joined');
+    await host.nextOfType('room.state');
+
+    // A room sitting in the lobby is not worth blocking a deploy for.
+    expect(app.hub.activeGameCount).toBe(0);
+    expect((await (await fetch(health)).json()).activeGames).toBe(0);
+
+    host.send({ type: 'room.start' });
+    await host.nextOfType('game.state');
+    expect(app.hub.activeGameCount).toBe(1);
+    expect((await (await fetch(health)).json()).activeGames).toBe(1);
+
+    // The count follows the sockets: once nobody is watching, nothing is at risk.
+    host.close();
+    await waitFor(() => app.hub.activeGameCount === 0);
+  });
+
   it('answers the prewarm fetch with CORS headers for allowed origins only', async () => {
     const store = new MemoryRoomStore();
     const { url } = await startApp(store, makeConfig({ allowedOrigins: ['https://quoridor.example'] }));
@@ -281,6 +305,15 @@ async function playOneMove(client: TestClient, state: RoomView): Promise<RoomVie
     move: anyMove(state.game!),
   });
   return afterVersion(client, state.gameVersion);
+}
+
+/** Polls until a condition holds, so a bookkeeping race fails loudly. */
+async function waitFor(condition: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('condition did not become true in time');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 }
 
 /** The next broadcast strictly newer than `version`. */

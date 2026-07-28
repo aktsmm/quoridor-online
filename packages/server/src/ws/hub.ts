@@ -4,7 +4,7 @@ import type { ServerConfig } from '../config.js';
 import { ConcurrencyLimiter, RateLimiter } from '../ratelimit.js';
 import { RoomError, isCpuToMove, seatToMove } from '../rooms/manager.js';
 import type { RoomManager } from '../rooms/manager.js';
-import type { StoredRoom } from '../rooms/record.js';
+import type { RoomStatus, StoredRoom } from '../rooms/record.js';
 import { fallbackMove, type AiPool } from '../ai/pool.js';
 import { PROTOCOL_VERSION, toRoomView, type ClientMessage, type ServerMessage } from './protocol.js';
 import { parseClientMessage, sanitiseName } from './schema.js';
@@ -52,6 +52,8 @@ export class Hub {
   readonly #clients = new Set<ClientState>();
   readonly #byRoom = new Map<string, Set<ClientState>>();
   readonly #thinking = new Set<string>();
+  /** Mirrors the last broadcast status per room so `/health` can report load. */
+  readonly #roomStatus = new Map<string, RoomStatus>();
 
   readonly #ipConnections: ConcurrencyLimiter;
   readonly #createLimiter: RateLimiter;
@@ -82,6 +84,21 @@ export class Hub {
 
   get connectionCount(): number {
     return this.#clients.size;
+  }
+
+  /**
+   * Rooms with a game in progress and at least one live socket.
+   *
+   * A revision update restarts the replica, and although rooms are snapshotted
+   * the restart still costs everyone a reconnect. The deploy workflow reads
+   * this through `/health` and holds off while games are running.
+   */
+  get activeGameCount(): number {
+    let count = 0;
+    for (const status of this.#roomStatus.values()) {
+      if (status === 'playing') count += 1;
+    }
+    return count;
   }
 
   handleConnection(socket: WebSocket, ip: string): void {
@@ -282,7 +299,10 @@ export class Hub {
     if (client.roomId === null) return;
     const set = this.#byRoom.get(client.roomId);
     set?.delete(client);
-    if (set && set.size === 0) this.#byRoom.delete(client.roomId);
+    if (set && set.size === 0) {
+      this.#byRoom.delete(client.roomId);
+      this.#roomStatus.delete(client.roomId);
+    }
     client.roomId = null;
     client.seatIndex = null;
   }
@@ -383,6 +403,8 @@ export class Hub {
   #broadcast(stored: StoredRoom, rid?: number): void {
     const set = this.#byRoom.get(stored.record.roomId);
     if (!set || set.size === 0) return;
+
+    this.#roomStatus.set(stored.record.roomId, stored.record.status);
 
     const room = toRoomView(stored.record);
     const message: ServerMessage =

@@ -1,0 +1,90 @@
+# Publishes the front end to Static Web Apps.
+#
+# The server URL is not known at commit time (it is the Container App's
+# generated FQDN), so it is read from Azure and baked into the bundle here.
+# Static Web Apps has no OIDC upload path, so the deployment token is fetched
+# at run time with the same federated identity instead of being stored.
+name: deploy-web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/web/**'
+      - 'packages/engine/**'
+      - 'package-lock.json'
+      - '.github/workflows/deploy-web.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: true
+
+env:
+  APP_NAME: ca-quoridor
+  SITE_NAME: swa-quoridor
+  RESOURCE_GROUP: rg-quoridor-online
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve the game server URL
+        id: server
+        run: |
+          fqdn=$(az containerapp show \
+            --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "url=https://${fqdn}" >> "$GITHUB_OUTPUT"
+
+      - run: npm ci
+
+      - name: Build
+        env:
+          VITE_SERVER_URL: ${{ steps.server.outputs.url }}
+        run: npm run build --workspace @quoridor/web
+
+      - name: Read the deployment token
+        id: token
+        run: |
+          token=$(az staticwebapp secrets list \
+            --name "$SITE_NAME" --resource-group "$RESOURCE_GROUP" \
+            --query "properties.apiKey" -o tsv)
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "$GITHUB_OUTPUT"
+
+      - uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.token.outputs.token }}
+          action: upload
+          app_location: packages/web/dist
+          output_location: ''
+          skip_app_build: true
+          skip_api_build: true
+
+      - name: Report the public URL
+        run: |
+          host=$(az staticwebapp show \
+            --name "$SITE_NAME" --resource-group "$RESOURCE_GROUP" \
+            --query "defaultHostname" -o tsv)
+          echo "web: https://${host}" >> "$GITHUB_STEP_SUMMARY"
