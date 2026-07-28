@@ -1,4 +1,4 @@
-import { applyMove, defaultWallsPerPlayer, type Move, type Orientation } from '@quoridor/engine';
+import { applyMove, defaultWallsPerPlayer, moverAtPly, type Move, type Orientation } from '@quoridor/engine';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Board, type BoardMode } from '../board/Board.js';
 import { useI18n } from '../i18n/index.js';
@@ -232,11 +232,11 @@ function WallPips({
 
 function MoveLog({ room, colors }: { room: RoomView; colors: readonly string[] }): React.JSX.Element {
   const { t } = useI18n();
-  const seats = room.seats.length || 2;
+  const game = room.game;
   return (
     <div className="move-log">
       <h3 className="move-log__title">{t('gameMoveLog')}</h3>
-      {room.moveLog.length === 0 ? (
+      {room.moveLog.length === 0 || !game ? (
         <p className="move-log__empty">{t('gameMoveLogEmpty')}</p>
       ) : (
         <ol className="move-log__list">
@@ -245,7 +245,7 @@ function MoveLog({ room, colors }: { room: RoomView; colors: readonly string[] }
               <span className="move-log__ply">{index + 1}</span>
               <span
                 className="move-log__move"
-                style={{ ['--seat-color' as string]: colors[index % seats] ?? 'var(--label)' }}
+                style={{ ['--seat-color' as string]: colors[moverAtPly(game, index)] ?? 'var(--label)' }}
               >
                 {entry}
               </span>

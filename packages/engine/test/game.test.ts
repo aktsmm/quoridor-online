@@ -9,6 +9,7 @@ import {
   legalMoves,
   legalPawnMoves,
   legalWalls,
+  moverAtPly,
   seatsExcluding,
   tryApplyMove,
   wallRejection,
@@ -287,5 +288,54 @@ describe('legal move generation', () => {
     expect(legalPawnMoves(over)).toEqual([]);
     expect(legalWalls(over)).toEqual([]);
     expect(legalMoves(over)).toEqual([]);
+  });
+});
+
+describe('moverAtPly', () => {
+  /** Plays `count` plies of whatever move is first in the list. */
+  function advance(state: GameState, count: number): GameState {
+    let next = state;
+    for (let i = 0; i < count; i += 1) {
+      next = applyMove(next, { type: 'pawn', to: legalPawnMoves(next)[0]! });
+    }
+    return next;
+  }
+
+  it('attributes every ply when the first player moves first', () => {
+    const game = advance(createGame({ playerCount: 2 }), 5);
+    expect([0, 1, 2, 3, 4].map((i) => moverAtPly(game, i))).toEqual([0, 1, 0, 1, 0]);
+  });
+
+  it('follows a randomised first mover', () => {
+    for (const playerCount of [2, 3, 4] as const) {
+      for (let firstTurn = 0; firstTurn < playerCount; firstTurn += 1) {
+        const game = advance(createGame({ playerCount, firstTurn }), playerCount + 1);
+        const expected = Array.from(
+          { length: playerCount + 1 },
+          (_, i) => (firstTurn + i) % playerCount,
+        );
+        expect(Array.from({ length: playerCount + 1 }, (_, i) => moverAtPly(game, i))).toEqual(
+          expected,
+        );
+      }
+    }
+  });
+
+  it('still attributes correctly once someone has won', () => {
+    // The winner keeps the turn instead of passing it on, so the finished
+    // state has to be read from the winner rather than from `turn`.
+    let game = createGame({ playerCount: 2, firstTurn: 1 });
+    while (game.winner === null) {
+      const me = game.players[game.turn]!;
+      const forward = legalPawnMoves(game).reduce((best, pos) => {
+        const d = (p: Pos): number =>
+          me.goal.kind === 'row' ? Math.abs(me.goal.value - p.r) : Math.abs(me.goal.value - p.c);
+        return d(pos) < d(best) ? pos : best;
+      });
+      game = applyMove(game, { type: 'pawn', to: forward });
+    }
+    expect(game.winner).not.toBeNull();
+    expect(moverAtPly(game, game.ply - 1)).toBe(game.winner);
+    expect(moverAtPly(game, 0)).toBe(1);
   });
 });

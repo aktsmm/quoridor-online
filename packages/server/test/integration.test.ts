@@ -4,7 +4,7 @@ import { createApp, type App } from '../src/app.js';
 import { DEFAULT_LIMITS, type ServerConfig } from '../src/config.js';
 import { MemoryRoomStore } from '../src/rooms/store.js';
 import { InlineAiPool } from '../src/ai/pool.js';
-import { CLOSE_SUPERSEDED } from '../src/ws/hub.js';
+import { CLOSE_POLICY, CLOSE_SUPERSEDED } from '../src/ws/hub.js';
 import type { RoomView, ServerMessage } from '../src/ws/protocol.js';
 import { TestClient } from './helpers/client.js';
 
@@ -295,6 +295,39 @@ describe('websocket vertical slice', () => {
     // one that must be told not to read it.
     expect(blocked.status).toBe(200);
     expect(blocked.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
+  it('refuses more than the allowed number of connections from one address', async () => {
+    const store = new MemoryRoomStore();
+    const cap = 3;
+    const { url } = await startApp(
+      store,
+      makeConfig({ limits: { ...DEFAULT_LIMITS, maxConnectionsPerIp: cap } }),
+    );
+
+    for (let i = 0; i < cap; i += 1) await connect(url);
+
+    // The socket still opens - the guard runs after the upgrade - so the
+    // rejection shows up as a policy close rather than a failed connect.
+    const overflow = await TestClient.connect(url);
+    clients.push(overflow);
+    const closed = await overflow.waitForClose();
+    expect(closed.code).toBe(CLOSE_POLICY);
+    expect(closed.reason).toBe('too many connections');
+  });
+
+  it('frees an address slot when a connection goes away', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(store, makeConfig({ limits: { ...DEFAULT_LIMITS, maxConnectionsPerIp: 1 } }));
+
+    const first = await connect(url);
+    first.close();
+    await waitFor(() => first.closeInfo !== null);
+
+    const second = await TestClient.connect(url);
+    clients.push(second);
+    // A hello means the slot was released rather than leaked.
+    await second.next((m) => m.type === 'hello');
   });
 });
 

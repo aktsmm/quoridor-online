@@ -264,3 +264,21 @@ export function distanceToGoal(state: GameState, playerIndex: number): number {
 export function isGameOver(state: GameState): boolean {
   return state.winner !== null;
 }
+
+/**
+ * Which seat played ply `index` (0-based), for colouring the move log.
+ *
+ * The first mover is randomised per game and is not stored anywhere, so it has
+ * to be recovered from the state. While the game runs `turn` has advanced once
+ * per ply; once someone wins, `turn` stops on the winner instead, so the last
+ * ply is the anchor in that case.
+ */
+export function moverAtPly(state: GameState, index: number): number {
+  const n = state.playerCount;
+  const first =
+    state.winner === null
+      ? (((state.turn - state.ply) % n) + n) % n
+      : (((state.winner - (state.ply - 1)) % n) + n) % n;
+  return (first + index) % n;
+}
+
