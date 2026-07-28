@@ -62,7 +62,11 @@ jobs:
       - name: Build
         env:
           VITE_SERVER_URL: ${{ steps.server.outputs.url }}
-        run: npm run build --workspace @quoridor/web
+        run: |
+          # The web bundle imports the rules engine from its build output, so
+          # that workspace has to be compiled first.
+          npx tsc -b packages/engine
+          npm run build --workspace @quoridor/web
 
       - name: Read the deployment token
         id: token
