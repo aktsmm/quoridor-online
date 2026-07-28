@@ -1,0 +1,68 @@
+# Phase 0a spike: proves out the GHCR -> Container Apps deployment path with
+# OIDC (no long-lived secrets) before any real application code is written.
+# Deleted once Phase 6 lands the real deploy workflows.
+name: spike
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'spike/**'
+      - '.github/workflows/spike.yml'
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/spike
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        run: echo "image=${IMAGE}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: spike
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update container app image
+        run: |
+          az containerapp update \
+            --name ca-quoridor-spike \
+            --resource-group rg-quoridor-online \
+            --image "${{ needs.build.outputs.image }}" \
+            --output none
+          az containerapp show \
+            --name ca-quoridor-spike \
+            --resource-group rg-quoridor-online \
+            --query "properties.configuration.ingress.fqdn" -o tsv

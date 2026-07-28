@@ -1,0 +1,13 @@
+{
+  "name": "quoridor-spike",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Phase 0a infrastructure spike - throwaway echo WebSocket server",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
