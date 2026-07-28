@@ -17,6 +17,17 @@ param githubRepository string = 'aktsmm/quoridor-online'
 @description('Protected GitHub Environment the deploy workflows run in.')
 param githubEnvironment string = 'production'
 
+@description('''
+Subject prefix GitHub actually puts in the OIDC token. GitHub now issues
+ID-qualified subjects (repo:<owner>@<ownerId>/<repo>@<repoId>), so the value
+must be read from the repo rather than assumed:
+  gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix
+Leave empty to fall back to the classic "repo:owner/repo" form.
+''')
+param githubSubjectPrefix string = 'repo:aktsmm@71251920/quoridor-online@1315129369'
+
+var subjectPrefix = empty(githubSubjectPrefix) ? 'repo:${githubRepository}' : githubSubjectPrefix
+
 resource deployIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'id-quoridor-deploy'
   location: location
@@ -30,7 +41,7 @@ resource environmentCredential 'Microsoft.ManagedIdentity/userAssignedIdentities
   name: 'github-env-${githubEnvironment}'
   properties: {
     issuer: 'https://token.actions.githubusercontent.com'
-    subject: 'repo:${githubRepository}:environment:${githubEnvironment}'
+    subject: '${subjectPrefix}:environment:${githubEnvironment}'
     audiences: [
       'api://AzureADTokenExchange'
     ]
