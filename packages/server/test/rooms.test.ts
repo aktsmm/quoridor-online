@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { legalPawnMoves } from '@quoridor/engine';
+import { legalPawnMoves, CLOCKWISE_SEATS, type SeatDirection } from '@quoridor/engine';
 import { DEFAULT_LIMITS, type ServerConfig } from '../src/config.js';
 import { MemoryRoomStore } from '../src/rooms/store.js';
 import { RoomManager, RoomError, isCpuToMove, seatToMove } from '../src/rooms/manager.js';
@@ -158,6 +158,65 @@ describe('room lifecycle', () => {
     });
     const started = await manager.start(filled.stored.record.roomId, 0);
     expect(started.record.seats.filter((s) => s.kind === 'cpu')).toHaveLength(2);
+  });
+});
+
+describe('three-player seat layout', () => {
+  // `#layoutSeats` draws the empty side first, then the rotation, so feeding
+  // these two values enumerates every layout the server can produce.
+  function managerDrawing(empty: number, offset: number): RoomManager {
+    const draws = [empty / 4, offset / 3];
+    let call = 0;
+    return new RoomManager({
+      store: new MemoryRoomStore(now),
+      config: makeConfig(),
+      now,
+      random: () => draws[call++ % draws.length]!,
+    });
+  }
+
+  async function layout(empty: number, offset: number): Promise<string[]> {
+    const room = await managerDrawing(empty, offset).createRoom({
+      playerCount: 3,
+      aiLevel: 'easy',
+      fillWithCpu: true,
+      name: 'Host',
+    });
+    return room.stored.record.seats.map((s) => s.seat);
+  }
+
+  it('gives every seat index each direction equally often', async () => {
+    const counts = [new Map<string, number>(), new Map<string, number>(), new Map<string, number>()];
+    for (let empty = 0; empty < 4; empty += 1) {
+      for (let offset = 0; offset < 3; offset += 1) {
+        const seats = await layout(empty, offset);
+        seats.forEach((seat, index) => {
+          const perSeat = counts[index]!;
+          perSeat.set(seat, (perSeat.get(seat) ?? 0) + 1);
+        });
+      }
+    }
+    // Directions are not equally strong, so an uneven mapping would hand the
+    // host a permanent edge over whoever joins last.
+    for (const perSeat of counts) {
+      expect([...perSeat.values()]).toEqual([3, 3, 3, 3]);
+    }
+  });
+
+  it('keeps the turn order clockwise', async () => {
+    for (let empty = 0; empty < 4; empty += 1) {
+      for (let offset = 0; offset < 3; offset += 1) {
+        const seats = await layout(empty, offset);
+        expect(new Set(seats).size).toBe(3);
+        const positions = seats.map((s) => CLOCKWISE_SEATS.indexOf(s as SeatDirection));
+        // Walking the seats in order must never turn anticlockwise: exactly one
+        // step wraps past the end of the clockwise ring.
+        const wraps = positions.filter(
+          (p, i) => p < positions[(i + positions.length - 1) % positions.length]!,
+        );
+        expect(wraps).toHaveLength(1);
+      }
+    }
   });
 });
 

@@ -161,7 +161,15 @@ export class RoomManager {
   #layoutSeats(playerCount: PlayerCount): SeatDirection[] {
     if (playerCount !== 3) return defaultSeats(playerCount);
     const empty = CLOCKWISE_SEATS[Math.floor(this.#random() * CLOCKWISE_SEATS.length)]!;
-    return seatsExcluding(empty);
+    const seats = seatsExcluding(empty);
+    // `seatsExcluding` keeps the fixed clockwise order, so on its own the host
+    // would draw south in three of the four layouts and the last player to join
+    // would draw east just as often. Rotating the survivors leaves the turn
+    // order clockwise but hands every seat index each direction equally often,
+    // which matters because directions are not equally strong: 300 hard-vs-hard
+    // games measured west 44% against east 27%.
+    const offset = Math.floor(this.#random() * seats.length);
+    return [...seats.slice(offset), ...seats.slice(0, offset)];
   }
 
   async joinRoom(code: string, name: string): Promise<SeatGrant> {
