@@ -13,6 +13,20 @@ import {
   type Pos,
   type Wall,
 } from '@quoridor/engine';
+import {
+  PAWN_HI,
+  PAWN_LO,
+  RESERVE_HI,
+  RESERVE_LO,
+  TURN_HI,
+  TURN_LO,
+  WALL_HI,
+  WALL_LO,
+  foldHash,
+  pawnKey,
+  reserveKey,
+  wallKeyIndex,
+} from './zobrist.js';
 
 export type Undo =
   | {
@@ -49,6 +63,8 @@ export class SearchPosition {
   turn: number;
   winner: number | null;
   private wallCount: number;
+  private hashHi = 0;
+  private hashLo = 0;
 
   private constructor(state: GameState) {
     this.board = Board.from(state.walls);
@@ -60,10 +76,45 @@ export class SearchPosition {
     this.turn = state.turn;
     this.winner = state.winner;
     this.wallCount = state.walls.length;
+
+    for (let i = 0; i < this.playerCount; i += 1) {
+      this.togglePawn(i, this.cells[i]!);
+      this.toggleReserve(i, this.wallsLeft[i]!);
+    }
+    for (const wall of state.walls) this.toggleWall(wall);
+    this.toggleTurn(this.turn);
   }
 
   static from(state: GameState): SearchPosition {
     return new SearchPosition(state);
+  }
+
+  /** Transposition key: pawns, walls, reserves and side to move. */
+  get hash(): number {
+    return foldHash(this.hashHi, this.hashLo);
+  }
+
+  private togglePawn(player: number, cell: number): void {
+    const index = pawnKey(player, cell);
+    this.hashHi ^= PAWN_HI[index]!;
+    this.hashLo ^= PAWN_LO[index]!;
+  }
+
+  private toggleWall(wall: Wall): void {
+    const index = wallKeyIndex(wall);
+    this.hashHi ^= WALL_HI[index]!;
+    this.hashLo ^= WALL_LO[index]!;
+  }
+
+  private toggleTurn(player: number): void {
+    this.hashHi ^= TURN_HI[player]!;
+    this.hashLo ^= TURN_LO[player]!;
+  }
+
+  private toggleReserve(player: number, left: number): void {
+    const index = reserveKey(player, left);
+    this.hashHi ^= RESERVE_HI[index]!;
+    this.hashLo ^= RESERVE_LO[index]!;
   }
 
   get totalWalls(): number {
@@ -122,20 +173,29 @@ export class SearchPosition {
     this.occupied[from] = 0;
     this.occupied[to] = 1;
     this.cells[player] = to;
+    this.togglePawn(player, from);
+    this.togglePawn(player, to);
+    this.toggleTurn(this.turn);
     if (isGoalCell(this.goals[player]!, to)) {
       this.winner = player;
     } else {
       this.turn = (this.turn + 1) % this.playerCount;
     }
+    this.toggleTurn(this.turn);
     return undo;
   }
 
   applyWall(player: number, wall: Wall): Undo {
     const undo: Undo = { kind: 'wall', player, wall, prevTurn: this.turn };
     this.board.add(wall);
+    this.toggleWall(wall);
+    this.toggleReserve(player, this.wallsLeft[player]!);
     this.wallsLeft[player]! -= 1;
+    this.toggleReserve(player, this.wallsLeft[player]!);
     this.wallCount += 1;
+    this.toggleTurn(this.turn);
     this.turn = (this.turn + 1) % this.playerCount;
+    this.toggleTurn(this.turn);
     return undo;
   }
 
@@ -144,14 +204,23 @@ export class SearchPosition {
       this.occupied[record.to] = 0;
       this.occupied[record.from] = 1;
       this.cells[record.player] = record.from;
+      this.togglePawn(record.player, record.to);
+      this.togglePawn(record.player, record.from);
+      this.toggleTurn(this.turn);
       this.turn = record.prevTurn;
+      this.toggleTurn(this.turn);
       this.winner = record.prevWinner;
       return;
     }
     this.board.remove(record.wall);
+    this.toggleWall(record.wall);
+    this.toggleReserve(record.player, this.wallsLeft[record.player]!);
     this.wallsLeft[record.player]! += 1;
+    this.toggleReserve(record.player, this.wallsLeft[record.player]!);
     this.wallCount -= 1;
+    this.toggleTurn(this.turn);
     this.turn = record.prevTurn;
+    this.toggleTurn(this.turn);
   }
 
   apply(move: Move): Undo {
