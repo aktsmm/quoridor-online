@@ -257,6 +257,21 @@ describe('websocket vertical slice', () => {
     expect((await response.json()).status).toBe('ok');
     expect(app.hub.connectionCount).toBe(0);
   });
+
+  it('answers the prewarm fetch with CORS headers for allowed origins only', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(store, makeConfig({ allowedOrigins: ['https://quoridor.example'] }));
+    const health = `${url.replace('ws://', 'http://')}/health`;
+
+    const allowed = await fetch(health, { headers: { origin: 'https://quoridor.example' } });
+    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://quoridor.example');
+
+    const blocked = await fetch(health, { headers: { origin: 'https://evil.example' } });
+    // The body is harmless, so the request still succeeds; the browser is the
+    // one that must be told not to read it.
+    expect(blocked.status).toBe(200);
+    expect(blocked.headers.get('access-control-allow-origin')).toBeNull();
+  });
 });
 
 async function playOneMove(client: TestClient, state: RoomView): Promise<RoomView> {

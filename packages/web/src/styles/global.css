@@ -1,0 +1,207 @@
+@import './theme.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--label);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  /* The board is a drag-free surface; stop iOS rubber-banding over it. */
+  overscroll-behavior: none;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+input {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2.5px solid var(--blue);
+  outline-offset: 2px;
+}
+
+/* ---------- shared primitives ---------- */
+
+.glass {
+  background: var(--surface);
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  border: 0.5px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 20px;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 590;
+  letter-spacing: -0.01em;
+  background: var(--surface-sunken);
+  color: var(--label);
+  transition:
+    transform 0.18s var(--ease-out),
+    filter 0.18s var(--ease-standard),
+    opacity 0.18s var(--ease-standard);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+}
+
+.btn--primary {
+  background: var(--blue);
+  color: #fff;
+  box-shadow: var(--shadow-1);
+}
+
+.btn--danger {
+  background: transparent;
+  color: var(--red);
+}
+
+.btn--plain {
+  background: transparent;
+  color: var(--blue);
+  min-height: 34px;
+  padding: 0 10px;
+  font-weight: 500;
+}
+
+.btn--wide {
+  width: 100%;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.field__label {
+  font-size: 13px;
+  font-weight: 590;
+  color: var(--label-secondary);
+  letter-spacing: 0.01em;
+}
+
+.field input {
+  height: 46px;
+  padding: 0 15px;
+  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--hairline-strong);
+  background: var(--bg-elevated);
+  transition: border-color 0.18s var(--ease-standard);
+}
+
+.field input:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3.5px rgb(0 122 255 / 18%);
+}
+
+/* iOS-style segmented control. */
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.segmented__item {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--label);
+  white-space: nowrap;
+  transition:
+    background 0.2s var(--ease-standard),
+    box-shadow 0.2s var(--ease-standard),
+    transform 0.16s var(--ease-out);
+}
+
+.segmented__item[aria-pressed='true'] {
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-1);
+  font-weight: 590;
+}
+
+.segmented__item:active {
+  transform: scale(0.97);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

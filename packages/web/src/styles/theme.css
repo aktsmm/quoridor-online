@@ -1,0 +1,102 @@
+/*
+ * Apple-flavoured design tokens. Light and dark are the same variable names so
+ * every component can stay theme-agnostic; only this file knows the palette.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Hiragino Sans',
+    'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Apple system colours - light */
+  --blue: #007aff;
+  --orange: #ff9500;
+  --green: #34c759;
+  --pink: #ff2d55;
+  --red: #ff3b30;
+  --yellow: #ffcc00;
+  --purple: #af52de;
+
+  --bg: #f2f2f7;
+  --bg-elevated: #ffffff;
+  --surface: rgb(255 255 255 / 72%);
+  --surface-strong: rgb(255 255 255 / 90%);
+  --surface-sunken: rgb(118 118 128 / 12%);
+  --hairline: rgb(60 60 67 / 13%);
+  --hairline-strong: rgb(60 60 67 / 22%);
+
+  --label: #000000;
+  --label-secondary: rgb(60 60 67 / 60%);
+  --label-tertiary: rgb(60 60 67 / 30%);
+
+  --board-bg: #ffffff;
+  --board-cell: rgb(120 120 128 / 8%);
+  --board-cell-hover: rgb(120 120 128 / 16%);
+  --board-goal: rgb(120 120 128 / 14%);
+  --wall-face: #8e8e93;
+  --wall-shadow: rgb(0 0 0 / 22%);
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 6%), 0 1px 1px rgb(0 0 0 / 4%);
+  --shadow-2:
+    0 4px 10px rgb(0 0 0 / 6%), 0 1px 3px rgb(0 0 0 / 6%), 0 0 0 0.5px rgb(0 0 0 / 4%);
+  --shadow-3:
+    0 24px 48px rgb(0 0 0 / 12%), 0 8px 16px rgb(0 0 0 / 8%), 0 0 0 0.5px rgb(0 0 0 / 5%);
+
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 30px;
+
+  /* Apple's standard easing curves. */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --blue: #0a84ff;
+    --orange: #ff9f0a;
+    --green: #30d158;
+    --pink: #ff375f;
+    --red: #ff453a;
+    --yellow: #ffd60a;
+    --purple: #bf5af2;
+
+    --bg: #000000;
+    --bg-elevated: #1c1c1e;
+    --surface: rgb(44 44 46 / 68%);
+    --surface-strong: rgb(44 44 46 / 92%);
+    --surface-sunken: rgb(118 118 128 / 24%);
+    --hairline: rgb(84 84 88 / 40%);
+    --hairline-strong: rgb(84 84 88 / 65%);
+
+    --label: #ffffff;
+    --label-secondary: rgb(235 235 245 / 60%);
+    --label-tertiary: rgb(235 235 245 / 30%);
+
+    --board-bg: #1c1c1e;
+    --board-cell: rgb(120 120 128 / 20%);
+    --board-cell-hover: rgb(120 120 128 / 34%);
+    --board-goal: rgb(120 120 128 / 30%);
+    --wall-face: #aeaeb2;
+    --wall-shadow: rgb(0 0 0 / 60%);
+
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
+    --shadow-2: 0 4px 12px rgb(0 0 0 / 45%), 0 0 0 0.5px rgb(255 255 255 / 6%);
+    --shadow-3: 0 28px 56px rgb(0 0 0 / 60%), 0 0 0 0.5px rgb(255 255 255 / 8%);
+  }
+}
+
+/* Seat colours are referenced by index so the board and the roster agree. */
+:root {
+  --seat-0: var(--blue);
+  --seat-1: var(--orange);
+  --seat-2: var(--green);
+  --seat-3: var(--pink);
+}

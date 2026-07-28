@@ -1,0 +1,214 @@
+.board-frame {
+  position: relative;
+  width: 100%;
+  max-width: min(76vh, 560px);
+  margin: 0 auto;
+  aspect-ratio: 1;
+  padding: clamp(8px, 2.2%, 16px);
+  border-radius: var(--radius-xl);
+  background: var(--board-bg);
+  border: 0.5px solid var(--hairline);
+  box-shadow: var(--shadow-3);
+  touch-action: manipulation;
+}
+
+.board {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.board__layer {
+  position: absolute;
+  inset: 0;
+  /* Layers are purely visual; only the buttons below opt back in, so a wall
+     slot is never shadowed by the square sitting on top of it. */
+  pointer-events: none;
+}
+
+/* Wall hit areas sit below pawns so a tap near a groove still moves the pawn. */
+.board__layer--walls {
+  z-index: 1;
+}
+
+.board__layer--squares {
+  z-index: 2;
+}
+
+.board__layer--pawns {
+  z-index: 3;
+  pointer-events: none;
+}
+
+.board__layer--placed {
+  z-index: 4;
+  pointer-events: none;
+}
+
+.square {
+  position: absolute;
+  border-radius: 22%;
+  background: var(--board-cell);
+  transition: background 0.2s var(--ease-standard);
+}
+
+.square--goal {
+  background: var(--board-goal);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--goal-color) 34%, transparent);
+}
+
+.square--target {
+  background: color-mix(in srgb, var(--seat-color) 22%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--seat-color) 55%, transparent);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.square--target::after {
+  content: '';
+  position: absolute;
+  inset: 34%;
+  border-radius: 50%;
+  background: var(--seat-color);
+  opacity: 0.85;
+  animation: target-pulse 1.9s var(--ease-standard) infinite;
+}
+
+.square--target:hover {
+  background: color-mix(in srgb, var(--seat-color) 34%, transparent);
+}
+
+@keyframes target-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.22);
+    opacity: 0.45;
+  }
+}
+
+.pawn {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 32% 28%,
+    color-mix(in srgb, var(--seat-color) 62%, white),
+    var(--seat-color) 62%
+  );
+  box-shadow:
+    0 3px 8px rgb(0 0 0 / 26%),
+    inset 0 -2px 4px rgb(0 0 0 / 18%),
+    inset 0 2px 3px rgb(255 255 255 / 32%);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: clamp(9px, 2.1vw, 13px);
+  font-weight: 700;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 30%);
+}
+
+.pawn--active {
+  box-shadow:
+    0 3px 8px rgb(0 0 0 / 26%),
+    0 0 0 3px color-mix(in srgb, var(--seat-color) 40%, transparent),
+    inset 0 -2px 4px rgb(0 0 0 / 18%),
+    inset 0 2px 3px rgb(255 255 255 / 32%);
+}
+
+.pawn--you::after {
+  content: '';
+  position: absolute;
+  inset: -13%;
+  border-radius: 50%;
+  border: 2px dashed color-mix(in srgb, var(--seat-color) 62%, transparent);
+  animation: you-spin 9s linear infinite;
+}
+
+@keyframes you-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.wall {
+  position: absolute;
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--wall-color) 88%, white),
+    var(--wall-color)
+  );
+  box-shadow:
+    0 2px 5px var(--wall-shadow),
+    inset 0 1px 1px rgb(255 255 255 / 30%);
+}
+
+.wall--preview {
+  background: var(--seat-color);
+  opacity: 0.45;
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--seat-color) 60%, transparent);
+}
+
+.wall-hit {
+  position: absolute;
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.wall-hit::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--seat-color);
+  opacity: 0;
+  transition: opacity 0.16s var(--ease-standard);
+}
+
+.wall-hit:hover::after,
+.wall-hit:focus-visible::after {
+  opacity: 0.12;
+}
+
+/* Coordinate rulers, kept outside the play surface so nothing shifts. */
+.board-frame__files,
+.board-frame__ranks {
+  position: absolute;
+  color: var(--label-tertiary);
+  font-size: clamp(8px, 1.8vw, 11px);
+  font-weight: 590;
+  pointer-events: none;
+  user-select: none;
+}
+
+.board-frame__files {
+  left: clamp(8px, 2.2%, 16px);
+  right: clamp(8px, 2.2%, 16px);
+  bottom: -18px;
+  height: 14px;
+}
+
+.board-frame__ranks {
+  top: clamp(8px, 2.2%, 16px);
+  bottom: clamp(8px, 2.2%, 16px);
+  left: -16px;
+  width: 14px;
+}
+
+.board-frame__tick {
+  position: absolute;
+  display: grid;
+  place-items: center;
+}
+
+@media (max-width: 520px) {
+  .board-frame__files,
+  .board-frame__ranks {
+    display: none;
+  }
+}

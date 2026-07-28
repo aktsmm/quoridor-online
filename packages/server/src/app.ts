@@ -35,6 +35,18 @@ export function createApp(parts: AppParts): App {
   const fastify = Fastify({ serverFactory: (handler) => http.on('request', handler) });
 
   const startedAt = Date.now();
+  // The front end lives on a different origin (Static Web Apps -> Container
+  // Apps), so the prewarm fetch needs an explicit allow header. The WebSocket
+  // upgrade uses the same allow-list, just enforced differently.
+  fastify.addHook('onRequest', (request, reply, done) => {
+    const origin = request.headers.origin;
+    if (origin !== undefined && isOriginAllowed(config, origin)) {
+      void reply.header('access-control-allow-origin', origin);
+      void reply.header('vary', 'Origin');
+    }
+    done();
+  });
+
   // Hit by the front end on page load: it wakes a scaled-to-zero replica up
   // before the player has finished reading the lobby.
   fastify.get('/health', () => ({

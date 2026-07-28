@@ -12,8 +12,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -b packages/engine packages/ai packages/server",
-    "typecheck": "tsc -b --noEmit packages/engine packages/ai packages/server",
+    "build": "tsc -b packages/engine packages/ai packages/server && npm run build --workspace @quoridor/web",
+    "typecheck": "tsc -b --noEmit packages/engine packages/ai packages/server && npm run typecheck --workspace @quoridor/web",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
