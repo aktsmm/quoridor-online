@@ -16,15 +16,20 @@ COPY packages/ai packages/ai
 COPY packages/server packages/server
 RUN npx tsc -b packages/server
 
-# Drop dev dependencies before copying node_modules into the runtime image.
-RUN npm prune --omit=dev --workspace @quoridor/server --include-workspace-root
+# Reinstall without dev dependencies. `npm prune --omit=dev` is not equivalent:
+# it walks the workspace tree and drops packages the server genuinely needs
+# (ajv, which fastify only re-exports a different major of).
+RUN npm ci --omit=dev --workspace @quoridor/server --include-workspace-root
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
 
+# npm hoists what it can to the root, but a workspace whose version range
+# conflicts with a transitive one keeps its own copy, so both trees are needed.
 COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/packages/server/node_modules ./packages/server/node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/packages/engine/package.json ./packages/engine/package.json
 COPY --from=build /app/packages/engine/dist ./packages/engine/dist
