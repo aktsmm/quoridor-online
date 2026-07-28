@@ -1,0 +1,36 @@
+{
+  "name": "quoridor-online",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Online Quoridor - play in the browser against friends or CPU",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b packages/engine packages/ai packages/server && npm run build --workspace @quoridor/web",
+    "typecheck": "tsc -b --noEmit packages/engine packages/ai packages/server",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "dev:server": "npm run dev --workspace @quoridor/server",
+    "dev:web": "npm run dev --workspace @quoridor/web",
+    "clean": "rimraf packages/*/dist packages/*/tsconfig.tsbuildinfo"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@types/node": "^22.10.5",
+    "eslint": "^9.18.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.20.0",
+    "vitest": "^3.0.2"
+  }
+}

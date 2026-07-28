@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quoridor spike - SWA to Container Apps</title>
+    <style>
+      body {
+        font-family: -apple-system, 'SF Pro Text', 'Hiragino Sans', system-ui, sans-serif;
+        margin: 0;
+        padding: 2rem;
+        background: #f5f5f7;
+        color: #1d1d1f;
+      }
+      pre {
+        background: #fff;
+        border-radius: 12px;
+        padding: 1rem;
+        overflow: auto;
+        box-shadow: 0 1px 3px rgb(0 0 0 / 0.08);
+      }
+      .ok {
+        color: #34c759;
+      }
+      .bad {
+        color: #ff3b30;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Phase 0a: SWA &rarr; Container Apps WebSocket</h1>
+    <p>Origin: <code id="origin"></code></p>
+    <p>Status: <strong id="status">connecting…</strong></p>
+    <pre id="log"></pre>
+    <script>
+      const WS_URL = 'wss://ca-quoridor-spike.salmonpond-6baa554d.japaneast.azurecontainerapps.io';
+      const logEl = document.getElementById('log');
+      const statusEl = document.getElementById('status');
+      document.getElementById('origin').textContent = location.origin;
+
+      const log = (m) => {
+        logEl.textContent += `${new Date().toISOString().slice(11, 19)} ${m}\n`;
+      };
+
+      const ws = new WebSocket(WS_URL);
+      ws.onopen = () => {
+        statusEl.textContent = 'connected';
+        statusEl.className = 'ok';
+        log('open');
+        ws.send(JSON.stringify({ from: 'swa', origin: location.origin }));
+      };
+      ws.onmessage = (e) => log(`msg ${e.data}`);
+      ws.onerror = () => {
+        statusEl.textContent = 'error';
+        statusEl.className = 'bad';
+        log('error');
+      };
+      ws.onclose = (e) => log(`close ${e.code}`);
+    </script>
+  </body>
+</html>
