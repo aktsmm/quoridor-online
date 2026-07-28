@@ -120,7 +120,7 @@ function Shell(): React.JSX.Element {
 }
 
 /**
- * Container Apps scales to zero, so the very first visit can wait ~25 seconds.
+ * Container Apps scales to zero, so the very first visit can wait ~35 seconds.
  * Saying so up front is far better than an unexplained disabled button.
  */
 function ColdStartHint(): React.JSX.Element {

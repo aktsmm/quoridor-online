@@ -7,7 +7,7 @@ export const ja: Dictionary = {
 
   connOffline: '未接続',
   connWaking: 'サーバーを起動中',
-  connWakingHint: 'サーバーは無操作時に停止します。最大 30 秒ほどかかります。',
+  connWakingHint: 'サーバーは無操作時に停止します。最大 40 秒ほどかかります。',
   connConnecting: '接続中',
   connOnline: '接続済み',
   connReconnecting: '再接続中',

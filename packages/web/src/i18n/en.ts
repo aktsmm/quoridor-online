@@ -6,7 +6,7 @@ export const en = {
   // --- connection ---
   connOffline: 'Not connected',
   connWaking: 'Waking the server',
-  connWakingHint: 'The server sleeps when idle. This can take up to 30 seconds.',
+  connWakingHint: 'The server sleeps when idle. This can take up to 40 seconds.',
   connConnecting: 'Connecting',
   connOnline: 'Connected',
   connReconnecting: 'Reconnecting',

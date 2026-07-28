@@ -16,8 +16,8 @@ const FACTOR = 1.7;
 /** ±25% so a crowd of clients does not stampede a just-restarted replica. */
 const JITTER = 0.25;
 const HEARTBEAT_MS = 20_000;
-/** Container Apps cold start has been measured at ~24 s; leave headroom. */
-const OPEN_TIMEOUT_MS = 45_000;
+/** Container Apps cold start has been measured at ~35 s; leave headroom. */
+const OPEN_TIMEOUT_MS = 60_000;
 
 /**
  * A WebSocket that keeps trying.
