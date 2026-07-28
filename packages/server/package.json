@@ -1,0 +1,26 @@
+{
+  "name": "@quoridor/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Authoritative Quoridor game server: rooms, reconnects and Table Storage snapshots",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rimraf dist tsconfig.tsbuildinfo",
+    "dev": "npm run build && node --enable-source-maps dist/main.js",
+    "start": "node --enable-source-maps dist/main.js"
+  },
+  "dependencies": {
+    "@azure/data-tables": "^13.3.0",
+    "@azure/identity": "^4.5.0",
+    "@quoridor/ai": "*",
+    "@quoridor/engine": "*",
+    "ajv": "^8.17.1",
+    "fastify": "^5.2.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13"
+  }
+}
