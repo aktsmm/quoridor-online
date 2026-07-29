@@ -2,6 +2,7 @@ import {
   BOARD_SIZE,
   cellIndex,
   inverseQuarterTurns,
+  isActive,
   isGoalCell,
   legalPawnMoves,
   legalWalls,
@@ -24,9 +25,11 @@ import { vibrate } from '../state/prefs.js';
 import './board.css';
 import {
   CELL_PCT,
+  pointerTravelPct,
   posId,
   rectStyle,
   resolveBoardTarget,
+  resolveTouchRelease,
   sameTarget,
   squareRect,
   STEP_PCT,
@@ -64,7 +67,20 @@ export interface BoardProps {
   onPreview?: (preview: BoardPreview) => void;
 }
 
+interface PointerGesture {
+  readonly pointerId: number;
+  readonly start: { x: number; y: number };
+  readonly startClient: { x: number; y: number };
+  readonly boardWidth: number;
+  readonly startedAt: number;
+  maxDistance: number;
+  cancelled: boolean;
+}
+
 const FILES = 'abcdefghi';
+
+/** After this long an unfinished gesture is assumed lost, not still in progress. */
+const STALE_GESTURE_MS = 10_000;
 
 const SPRING = { type: 'spring', stiffness: 520, damping: 34, mass: 0.7 } as const;
 const WALL_SPRING = { type: 'spring', stiffness: 420, damping: 26, mass: 0.9 } as const;
@@ -85,6 +101,7 @@ export function Board({
   const [preview, setPreview] = useState<BoardTarget | null>(null);
   const previewRef = useRef<BoardTarget | null>(null);
   const draggingRef = useRef(false);
+  const gestureRef = useRef<PointerGesture | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
 
   const turn = normalizeQuarterTurns(viewRotation);
@@ -135,6 +152,7 @@ export function Board({
   useEffect(() => {
     if (interactive && smart) return;
     draggingRef.current = false;
+    gestureRef.current = null;
     if (previewRef.current !== null) publish(null, false);
   }, [interactive, smart, publish]);
 
@@ -163,6 +181,20 @@ export function Board({
     return next;
   };
 
+  const updateGesture = (event: React.PointerEvent<HTMLDivElement>): PointerGesture | null => {
+    const gesture = gestureRef.current;
+    if (!gesture) return null;
+    gesture.maxDistance = Math.max(
+      gesture.maxDistance,
+      pointerTravelPct(
+        gesture.startClient,
+        { x: event.clientX, y: event.clientY },
+        gesture.boardWidth,
+      ),
+    );
+    return gesture;
+  };
+
   const commit = (target: BoardTarget | null): void => {
     if (!target) {
       publish(null, false);
@@ -181,8 +213,33 @@ export function Board({
   const smartHandlers = smart && interactive
     ? {
         onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => {
+          const active = gestureRef.current;
+          if (active !== null) {
+            // A lost pointerup (an OS gesture stealing the touch, say) would
+            // otherwise wedge the board for the rest of the turn.
+            if (event.timeStamp - active.startedAt > STALE_GESTURE_MS) {
+              gestureRef.current = null;
+              draggingRef.current = false;
+            } else {
+              active.cancelled = true;
+              publish(null, false);
+              return;
+            }
+          }
           event.preventDefault();
+          const point = pointOf(event);
+          const rect = surfaceRef.current?.getBoundingClientRect();
+          if (!point || !rect || rect.width <= 0) return;
           draggingRef.current = true;
+          gestureRef.current = {
+            pointerId: event.pointerId,
+            start: point,
+            startClient: { x: event.clientX, y: event.clientY },
+            boardWidth: rect.width,
+            startedAt: event.timeStamp,
+            maxDistance: 0,
+            cancelled: false,
+          };
           try {
             event.currentTarget.setPointerCapture(event.pointerId);
           } catch {
@@ -192,15 +249,40 @@ export function Board({
         },
         onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => {
           if (!draggingRef.current && event.pointerType !== 'mouse') return;
+          if (draggingRef.current && gestureRef.current?.pointerId !== event.pointerId) return;
+          if (draggingRef.current) {
+            const gesture = updateGesture(event);
+            if (gesture?.cancelled) return;
+          }
           track(event);
         },
         onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => {
           if (!draggingRef.current) return;
+          if (gestureRef.current?.pointerId !== event.pointerId) return;
           draggingRef.current = false;
-          commit(track(event));
+          const point = pointOf(event);
+          const gesture = point ? updateGesture(event) : null;
+          const target = gesture?.cancelled
+            ? null
+            : event.pointerType === 'mouse'
+            ? track(event)
+            : point && gesture
+              ? resolveTouchRelease(point, {
+                  targets: viewTargets,
+                  walls: viewWalls,
+                  previous: previewRef.current,
+                  tapPoint: gesture.start,
+                  movementPct: gesture.maxDistance,
+                  elapsedMs: Math.max(0, event.timeStamp - gesture.startedAt),
+                })
+              : null;
+          gestureRef.current = null;
+          commit(target);
         },
-        onPointerCancel: () => {
+        onPointerCancel: (event: React.PointerEvent<HTMLDivElement>) => {
+          if (gestureRef.current?.pointerId !== event.pointerId) return;
           draggingRef.current = false;
+          gestureRef.current = null;
           publish(null, false);
         },
         onPointerLeave: (event: React.PointerEvent<HTMLDivElement>) => {
@@ -255,11 +337,18 @@ export function Board({
             const previewed = previewPawn !== null && samePos(previewPawn, toView(pos));
             const classes = ['square'];
             if (goal) classes.push('square--goal');
+            if (goal?.mine) classes.push('square--goal-mine');
             if (target) classes.push('square--target');
             if (previewed) classes.push('square--preview');
             const style: React.CSSProperties = {
               ...rectStyle(squareRect(toView(pos))),
-              ...(goal ? { ['--goal-color' as string]: goal } : {}),
+              ...(goal
+                ? {
+                    ['--goal-color' as string]: goal.colors[0] ?? 'var(--label)',
+                    ['--goal-color-2' as string]:
+                      goal.colors[1] ?? goal.colors[0] ?? 'var(--label)',
+                  }
+                : {}),
               ...(target ? { ['--seat-color' as string]: turnColor } : {}),
             };
             return target ? (
@@ -318,31 +407,38 @@ export function Board({
         </div>
 
         <div className="board__layer board__layer--pawns">
-          {game.players.map((player, index) => {
-            const rect = squareRect(toView(player.pos));
-            const classes = ['pawn'];
-            if (index === game.turn) classes.push('pawn--active');
-            if (index === youIndex) classes.push('pawn--you');
-            return (
-              <motion.div
-                key={index}
-                className={classes.join(' ')}
-                style={{
-                  width: `${CELL_PCT * 0.74}%`,
-                  height: `${CELL_PCT * 0.74}%`,
-                  ['--seat-color' as string]: colors[index] ?? 'var(--blue)',
-                }}
-                initial={false}
-                animate={{
-                  left: `${rect.left + CELL_PCT * 0.13}%`,
-                  top: `${rect.top + CELL_PCT * 0.13}%`,
-                }}
-                transition={SPRING}
-              >
-                {index + 1}
-              </motion.div>
-            );
-          })}
+          <AnimatePresence initial={false}>
+            {game.players.map((player, index) => {
+              // Finishing or giving up takes your pawn off the board.
+              if (!isActive(game, index)) return null;
+              const rect = squareRect(toView(player.pos));
+              const classes = ['pawn'];
+              if (index === game.turn) classes.push('pawn--active');
+              if (index === youIndex) classes.push('pawn--you');
+              return (
+                <motion.div
+                  key={index}
+                  className={classes.join(' ')}
+                  style={{
+                    width: `${CELL_PCT * 0.74}%`,
+                    height: `${CELL_PCT * 0.74}%`,
+                    ['--seat-color' as string]: colors[index] ?? 'var(--blue)',
+                  }}
+                  initial={false}
+                  animate={{
+                    left: `${rect.left + CELL_PCT * 0.13}%`,
+                    top: `${rect.top + CELL_PCT * 0.13}%`,
+                    scale: 1,
+                    opacity: 1,
+                  }}
+                  exit={{ scale: 0.2, opacity: 0 }}
+                  transition={SPRING}
+                >
+                  {index + 1}
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
         </div>
       </div>
 
@@ -417,18 +513,38 @@ function allSquares(): Pos[] {
 }
 
 /**
- * Tints the finish line so a new player can see where they are running to.
- * Only your own goal is marked - four tinted edges would just be noise.
+ * Tints each finish line in the colour of whoever is still running to it, with
+ * your own picked out more strongly. Corner squares belong to two goals at
+ * once, so they carry both colours.
  */
-function goalHighlights(game: GameState, youIndex: number | null): Map<string, string> {
-  const out = new Map<string, string>();
-  const index = youIndex ?? game.turn;
-  const player = game.players[index];
-  if (!player) return out;
-  for (let r = 0; r < BOARD_SIZE; r += 1) {
-    for (let c = 0; c < BOARD_SIZE; c += 1) {
-      if (isGoalCell(player.goal, cellIndex(c, r))) out.set(posId({ c, r }), `var(--seat-${index})`);
+interface GoalTint {
+  readonly colors: string[];
+  readonly mine: boolean;
+}
+
+function goalHighlights(game: GameState, youIndex: number | null): Map<string, GoalTint> {
+  const out = new Map<string, GoalTint>();
+  game.players.forEach((player, index) => {
+    // A finish line nobody is running to any more is just noise.
+    if (!isActive(game, index)) return;
+    const color = `var(--seat-${index})`;
+    const mine = index === youIndex;
+    for (let r = 0; r < BOARD_SIZE; r += 1) {
+      for (let c = 0; c < BOARD_SIZE; c += 1) {
+        if (!isGoalCell(player.goal, cellIndex(c, r))) continue;
+        const key = posId({ c, r });
+        const existing = out.get(key);
+        if (!existing) {
+          out.set(key, { colors: [color], mine });
+          continue;
+        }
+        // Your own colour leads, so the ring always points at your own line.
+        out.set(key, {
+          colors: mine ? [color, ...existing.colors] : [...existing.colors, color],
+          mine: existing.mine || mine,
+        });
+      }
     }
-  }
+  });
   return out;
 }

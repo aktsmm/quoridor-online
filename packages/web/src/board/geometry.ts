@@ -111,6 +111,32 @@ export const WALL_SNAP_PCT = CELL_PCT * 0.7;
 /** How much closer a rival candidate must be before the preview switches. */
 const HYSTERESIS = 1.25;
 
+/**
+ * A wall needs either this much movement or a deliberate hold before release.
+ *
+ * Measured as a percentage of the board width, so on a 350px board this is
+ * about 14px. It has to clear the platform tap slop (8dp on Android, a 15px
+ * radius in Chrome) or a shaky tap could still spend a wall.
+ */
+export const WALL_DRAG_THRESHOLD_PCT = 4;
+export const WALL_DWELL_MS = 250;
+
+/**
+ * Distance between two viewport points as a percentage of the board width.
+ *
+ * Viewport coordinates are used on purpose: measuring inside the board would
+ * count layout shifts (the readout growing, the preview appearing) as finger
+ * movement.
+ */
+export function pointerTravelPct(
+  start: { x: number; y: number },
+  current: { x: number; y: number },
+  boardWidth: number,
+): number {
+  if (!(boardWidth > 0)) return 0;
+  return (Math.hypot(current.x - start.x, current.y - start.y) / boardWidth) * 100;
+}
+
 function distanceToRect(rect: Rect, x: number, y: number): number {
   const dx = Math.max(rect.left - x, 0, x - (rect.left + rect.width));
   const dy = Math.max(rect.top - y, 0, y - (rect.top + rect.height));
@@ -186,6 +212,32 @@ export function resolveBoardTarget(
   }
 
   return null;
+}
+
+export interface TouchReleaseOptions extends ResolveOptions {
+  /** Board point captured on pointerdown, immune to layout movement mid-gesture. */
+  tapPoint?: { x: number; y: number };
+  /** Furthest distance travelled since pointerdown, as board percentage points. */
+  movementPct: number;
+  /** Time held before release. */
+  elapsedMs: number;
+}
+
+/**
+ * Applies the safety policy for touch and pen releases.
+ *
+ * A quick stationary tap can only move to a legal square. Walls require a drag
+ * or a short hold, so an incidental touch can never spend an irreversible wall.
+ */
+export function resolveTouchRelease(
+  point: { x: number; y: number },
+  options: TouchReleaseOptions,
+): BoardTarget | null {
+  const { tapPoint, movementPct, elapsedMs, ...resolveOptions } = options;
+  if (movementPct < WALL_DRAG_THRESHOLD_PCT && elapsedMs < WALL_DWELL_MS) {
+    return resolveBoardTarget(tapPoint ?? point, { ...resolveOptions, walls: [] });
+  }
+  return resolveBoardTarget(point, resolveOptions);
 }
 
 export const ORIENTATIONS: readonly Orientation[] = ['h', 'v'];

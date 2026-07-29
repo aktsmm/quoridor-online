@@ -112,9 +112,13 @@ export function chooseSearchMove(
 
   const search = (depth: number, ply: number, alphaIn: number, betaIn: number): number => {
     if (outOfTime()) throw TIME_UP;
-    if (position.winner !== null) {
-      return position.winner === me ? WIN_SCORE - ply : -WIN_SCORE + ply;
+    // Once I am off the board nothing later can change my place, and once one
+    // player is left the placings are settled.
+    if (position.isRetired(me)) {
+      const score = evaluate(position, me);
+      return score >= 0 ? score - ply : score + ply;
     }
+    if (position.isGameOver()) return evaluate(position, me) - ply;
     if (depth <= 0) return evaluate(position, me);
 
     let alpha = alphaIn;

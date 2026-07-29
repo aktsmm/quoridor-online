@@ -1,4 +1,4 @@
-import type { Move } from '@quoridor/engine';
+import { isActive, isGameOver, type Move } from '@quoridor/engine';
 import { SearchPosition } from './position.js';
 import { chooseGreedyMove } from './greedy.js';
 import { chooseStaticMove } from './static.js';
@@ -13,7 +13,7 @@ import {
 
 export * from './types.js';
 export { SearchPosition, cellToPos, pawnMove, ALL_WALLS } from './position.js';
-export { evaluate, distanceAdvantage, WIN_SCORE } from './evaluate.js';
+export { evaluate, distanceAdvantage, placeValue, WIN_SCORE } from './evaluate.js';
 export { chooseGreedyMove, bestStepTowardsGoal } from './greedy.js';
 export { chooseStaticMove, generateMoves, opponentsOf, scoreMove, scoreMoves } from './static.js';
 export { chooseSearchMove, type SearchOptions, type SearchResult } from './search.js';
@@ -63,7 +63,8 @@ export function chooseMove(options: ChooseMoveOptions): AiDecision {
 
   const state = options.state;
   const me = options.playerIndex ?? state.turn;
-  if (state.winner !== null) throw new Error('cannot choose a move in a finished game');
+  if (isGameOver(state)) throw new Error('cannot choose a move in a finished game');
+  if (!isActive(state, me)) throw new Error('cannot choose a move for a player who has finished');
 
   const position = SearchPosition.from(state);
   const rng = makeRng(options.seed ?? Math.floor(Math.random() * 0xffffffff));

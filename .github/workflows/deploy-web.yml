@@ -57,6 +57,33 @@ jobs:
             --query "properties.configuration.ingress.fqdn" -o tsv)
           echo "url=https://${fqdn}" >> "$GITHUB_OUTPUT"
 
+      - name: Wait for a compatible game server
+        env:
+          SERVER_URL: ${{ steps.server.outputs.url }}
+        run: |
+          expected=$(sed -nE 's/export const PROTOCOL_VERSION = ([0-9]+);/\1/p' \
+             packages/web/src/net/protocol.ts)
+          if [ -z "$expected" ]; then
+             echo "::error::could not read the expected protocol version"
+             exit 1
+          fi
+
+          for attempt in $(seq 1 120); do
+             body=$(curl -fsS --max-time 60 "${SERVER_URL}/health" || echo '')
+             actual=0
+             if [ -n "$body" ]; then
+               actual=$(echo "$body" | jq -r '.protocolVersion // 0' 2>/dev/null || echo 0)
+             fi
+             echo "attempt ${attempt}: server protocol=${actual}, expected=${expected}"
+             if [ "$actual" -eq "$expected" ]; then
+               exit 0
+             fi
+             sleep 15
+          done
+
+          echo "::error::compatible game server was not available after 30 minutes"
+          exit 1
+
       - run: npm ci
 
       - name: Build

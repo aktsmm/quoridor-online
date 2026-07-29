@@ -106,6 +106,9 @@ function Shell(): React.JSX.Element {
             onMove={(move, next) => store.makeMove(move, next)}
             onLeave={() => store.leaveRoom()}
             onRematch={() => store.rematch()}
+            onResign={() => store.resign()}
+            notice={session.notice}
+            onDismissNotice={() => store.dismissNotice()}
           />
         )}
       </main>

@@ -5,7 +5,9 @@ import {
   cellIndex,
   createGame,
   describeState,
+  isGameOver,
   tryApplyMove,
+  winnerOf,
   type GameState,
   type PlayerCount,
   type Wall,
@@ -34,7 +36,7 @@ function playToCompletion(
   let state = createGame({ playerCount });
   let plies = 0;
 
-  while (state.winner === null && plies < maxPlies) {
+  while (!isGameOver(state) && plies < maxPlies) {
     const decision = chooseMove({ state, level, seed: seed + plies, timeBudgetMs });
     const result = tryApplyMove(state, decision.move);
     expect(result.ok, `${level} produced an illegal move: ${JSON.stringify(decision.move)}`).toBe(
@@ -230,7 +232,7 @@ describe('easy AI (one ply)', () => {
   it('finishes games at every player count', () => {
     for (const playerCount of [2, 3, 4] as PlayerCount[]) {
       const { final, plies } = playToCompletion('easy', playerCount * 7919, playerCount);
-      expect(final.winner, `stalled after ${plies} plies: ${describeState(final)}`).not.toBeNull();
+      expect(isGameOver(final), `stalled after ${plies} plies: ${describeState(final)}`).toBe(true);
     }
   });
 
@@ -308,7 +310,7 @@ describe('hard AI', () => {
   it('finishes games at every player count', () => {
     for (const playerCount of [2, 3, 4] as PlayerCount[]) {
       const { final, plies } = playToCompletion('hard', playerCount * 104_729, playerCount);
-      expect(final.winner, `stalled after ${plies} plies: ${describeState(final)}`).not.toBeNull();
+      expect(isGameOver(final), `stalled after ${plies} plies: ${describeState(final)}`).toBe(true);
     }
   }, 120_000);
 
@@ -361,7 +363,7 @@ describe('hard AI', () => {
     const decision = chooseMove({ state, level: 'hard', seed: 8, timeBudgetMs: 300 });
     expect(decision.move).toEqual({ type: 'pawn', to: { c: 4, r: 8 } });
     const after = tryApplyMove(state, decision.move);
-    expect(after.ok && after.state.winner).toBe(0);
+    expect(after.ok && winnerOf(after.state)).toBe(0);
   }, 30_000);
 
   it('stops an opponent who would otherwise win next ply', () => {
@@ -408,7 +410,7 @@ describe('hard AI', () => {
     const rng = makeRng(0x5eed);
     let state = createGame({ playerCount: 4 });
 
-    for (let ply = 0; ply < 60 && state.winner === null; ply += 1) {
+    for (let ply = 0; ply < 60 && !isGameOver(state); ply += 1) {
       const position = SearchPosition.from(state);
       const { move } = chooseSearchMove(position, state.turn, {
         timeBudgetMs: 20,

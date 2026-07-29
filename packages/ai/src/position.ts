@@ -35,7 +35,8 @@ export type Undo =
       readonly from: number;
       readonly to: number;
       readonly prevTurn: number;
-      readonly prevWinner: number | null;
+      readonly retired: boolean;
+      readonly prevGoalCount: number;
     }
   | {
       readonly kind: 'wall';
@@ -61,7 +62,12 @@ export class SearchPosition {
   readonly occupied: Uint8Array;
   readonly finder = new Pathfinder();
   turn: number;
-  winner: number | null;
+  /** 1 for players who have left the board, either by finishing or giving up. */
+  readonly retired: Uint8Array;
+  /** How many players had already reached their goal when this one did, or -1. */
+  readonly goalRank: Int32Array;
+  private goalCount: number;
+  private retiredCount: number;
   private wallCount: number;
   private hashHi = 0;
   private hashLo = 0;
@@ -72,10 +78,23 @@ export class SearchPosition {
     this.wallsLeft = state.players.map((p) => p.wallsLeft);
     this.goals = state.players.map((p) => p.goal);
     this.playerCount = state.playerCount;
-    this.occupied = occupancyOf(this.cells);
     this.turn = state.turn;
-    this.winner = state.winner;
     this.wallCount = state.walls.length;
+
+    this.retired = new Uint8Array(this.playerCount);
+    this.goalRank = new Int32Array(this.playerCount).fill(-1);
+    this.goalCount = 0;
+    for (const record of state.completions) {
+      if (record.player < 0 || record.player >= this.playerCount) continue;
+      this.retired[record.player] = 1;
+      if (record.kind === 'goal') this.goalRank[record.player] = this.goalCount++;
+    }
+    this.retiredCount = state.completions.length;
+
+    // Retired pawns are off the board, so they neither block nor enable jumps.
+    this.occupied = occupancyOf(
+      this.cells.filter((_, i) => this.retired[i] === 0),
+    );
 
     for (let i = 0; i < this.playerCount; i += 1) {
       this.togglePawn(i, this.cells[i]!);
@@ -121,6 +140,34 @@ export class SearchPosition {
     return this.wallCount;
   }
 
+  /** How many players have reached their goal so far. */
+  get finishedCount(): number {
+    return this.goalCount;
+  }
+
+  /** How many players are still running, including anyone off-turn. */
+  get activeCount(): number {
+    return this.playerCount - this.retiredCount;
+  }
+
+  isRetired(player: number): boolean {
+    return this.retired[player] === 1;
+  }
+
+  /** True once only one player is left, which is when the placings are settled. */
+  isGameOver(): boolean {
+    return this.retiredCount >= this.playerCount - 1;
+  }
+
+  /** The next player still in the game, skipping anyone who has left. */
+  private nextActive(from: number): number {
+    for (let step = 1; step <= this.playerCount; step += 1) {
+      const candidate = (from + step) % this.playerCount;
+      if (this.retired[candidate] === 0) return candidate;
+    }
+    return from;
+  }
+
   distance(player: number): number {
     return this.finder.distanceToGoal(this.board, this.cells[player]!, this.goals[player]!);
   }
@@ -139,6 +186,7 @@ export class SearchPosition {
    * nodes narrow the candidate list before calling this.
    */
   legalWalls(player: number, candidates?: readonly Wall[]): Wall[] {
+    if (this.retired[player] === 1) return [];
     if (this.wallsLeft[player]! <= 0) return [];
     const out: Wall[] = [];
     for (const wall of candidates ?? ALL_WALLS) {
@@ -152,6 +200,7 @@ export class SearchPosition {
     this.board.add(wall);
     try {
       for (let i = 0; i < this.playerCount; i += 1) {
+        if (this.retired[i] === 1) continue;
         if (!this.finder.canReachGoal(this.board, this.cells[i]!, this.goals[i]!)) return false;
       }
     } finally {
@@ -162,24 +211,30 @@ export class SearchPosition {
 
   applyPawn(player: number, to: number): Undo {
     const from = this.cells[player]!;
+    const retiring = isGoalCell(this.goals[player]!, to);
     const undo: Undo = {
       kind: 'pawn',
       player,
       from,
       to,
       prevTurn: this.turn,
-      prevWinner: this.winner,
+      retired: retiring,
+      prevGoalCount: this.goalCount,
     };
     this.occupied[from] = 0;
-    this.occupied[to] = 1;
+    this.occupied[to] = retiring ? 0 : 1;
     this.cells[player] = to;
     this.togglePawn(player, from);
     this.togglePawn(player, to);
     this.toggleTurn(this.turn);
-    if (isGoalCell(this.goals[player]!, to)) {
-      this.winner = player;
+    if (retiring) {
+      this.retired[player] = 1;
+      this.goalRank[player] = this.goalCount;
+      this.goalCount += 1;
+      this.retiredCount += 1;
+      if (!this.isGameOver()) this.turn = this.nextActive(player);
     } else {
-      this.turn = (this.turn + 1) % this.playerCount;
+      this.turn = this.nextActive(this.turn);
     }
     this.toggleTurn(this.turn);
     return undo;
@@ -194,13 +249,19 @@ export class SearchPosition {
     this.toggleReserve(player, this.wallsLeft[player]!);
     this.wallCount += 1;
     this.toggleTurn(this.turn);
-    this.turn = (this.turn + 1) % this.playerCount;
+    this.turn = this.nextActive(this.turn);
     this.toggleTurn(this.turn);
     return undo;
   }
 
   undo(record: Undo): void {
     if (record.kind === 'pawn') {
+      if (record.retired) {
+        this.retired[record.player] = 0;
+        this.goalRank[record.player] = -1;
+        this.goalCount = record.prevGoalCount;
+        this.retiredCount -= 1;
+      }
       this.occupied[record.to] = 0;
       this.occupied[record.from] = 1;
       this.cells[record.player] = record.from;
@@ -209,7 +270,6 @@ export class SearchPosition {
       this.toggleTurn(this.turn);
       this.turn = record.prevTurn;
       this.toggleTurn(this.turn);
-      this.winner = record.prevWinner;
       return;
     }
     this.board.remove(record.wall);
@@ -224,9 +284,10 @@ export class SearchPosition {
   }
 
   apply(move: Move): Undo {
-    return move.type === 'pawn'
-      ? this.applyPawn(this.turn, cellIndex(move.to.c, move.to.r))
-      : this.applyWall(this.turn, move.wall);
+    if (move.type === 'pawn') return this.applyPawn(this.turn, cellIndex(move.to.c, move.to.r));
+    if (move.type === 'wall') return this.applyWall(this.turn, move.wall);
+    // The search never gives up, so a resignation has no place in it.
+    throw new Error('cannot search a resignation');
   }
 }
 

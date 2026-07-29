@@ -1,7 +1,7 @@
 import { Worker } from 'node:worker_threads';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { legalMoves, type GameState, type Move } from '@quoridor/engine';
+import { isGameOver, legalMoves, type GameState, type Move } from '@quoridor/engine';
 import {
   SearchPosition,
   chooseGreedyMove,
@@ -134,7 +134,7 @@ export class InlineAiPool implements AiPool {
  * The very first legal move is kept as the final backstop.
  */
 export function fallbackMove(state: GameState, playerIndex: number): Move | null {
-  if (state.winner === null) {
+  if (!isGameOver(state)) {
     try {
       return chooseGreedyMove(
         SearchPosition.from(state),

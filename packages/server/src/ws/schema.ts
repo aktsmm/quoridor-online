@@ -45,6 +45,12 @@ const move = {
       required: ['type', 'wall'],
       properties: { type: { const: 'wall' }, wall },
     },
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type'],
+      properties: { type: { const: 'resign' } },
+    },
   ],
 } as const;
 

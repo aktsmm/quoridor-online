@@ -38,11 +38,11 @@ export function generateMoves(
   return moves;
 }
 
-/** Everyone except `me`, in seat order. */
+/** Everyone except `me` who is still in the game, in seat order. */
 export function opponentsOf(position: SearchPosition, me: number): number[] {
   const out: number[] = [];
   for (let i = 0; i < position.playerCount; i += 1) {
-    if (i !== me) out.push(i);
+    if (i !== me && !position.isRetired(i)) out.push(i);
   }
   return out;
 }

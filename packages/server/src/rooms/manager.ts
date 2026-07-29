@@ -2,6 +2,7 @@ import {
   CLOCKWISE_SEATS,
   createGame,
   defaultSeats,
+  isGameOver,
   moveToNotation,
   seatsExcluding,
   tryApplyMove,
@@ -281,6 +282,13 @@ export class RoomManager {
   }
 
   #beginGame(record: RoomRecord): void {
+    for (const seat of record.seats) {
+      if (seat.connection !== 'disconnected') continue;
+      // The token still reclaims this seat. Until then the CPU keeps the game
+      // moving instead of waiting for a grace-period timer that may sleep.
+      seat.connection = 'cpu-controlled';
+      seat.disconnectedAt = null;
+    }
     if (record.fillWithCpu) {
       for (const seat of record.seats) {
         if (seat.connection !== 'empty') continue;
@@ -323,7 +331,7 @@ export class RoomManager {
 
       record.game = result.state;
       record.moveLog.push(moveToNotation(move));
-      if (result.state.winner !== null) record.status = 'finished';
+      if (isGameOver(result.state)) record.status = 'finished';
       ctx.touch();
       return true;
     });

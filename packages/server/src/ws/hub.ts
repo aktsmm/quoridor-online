@@ -1,4 +1,5 @@
 import type { WebSocket } from 'ws';
+import { finalPlacings } from '@quoridor/engine';
 import { isAiLevel } from '@quoridor/ai';
 import type { ServerConfig } from '../config.js';
 import { ConcurrencyLimiter, RateLimiter } from '../ratelimit.js';
@@ -6,7 +7,7 @@ import { RoomError, isCpuToMove, seatToMove } from '../rooms/manager.js';
 import type { RoomManager } from '../rooms/manager.js';
 import type { RoomStatus, StoredRoom } from '../rooms/record.js';
 import { fallbackMove, type AiPool } from '../ai/pool.js';
-import { PROTOCOL_VERSION, toRoomView, type ClientMessage, type ServerMessage } from './protocol.js';
+import { PROTOCOL_VERSION, toRoomView, type ClientMessage, type RoomView, type ServerMessage } from './protocol.js';
 import { parseClientMessage, sanitiseName } from './schema.js';
 
 /** Sent when the process is going away but the client should come straight back. */
@@ -54,6 +55,8 @@ export class Hub {
   readonly #thinking = new Set<string>();
   /** Mirrors the last broadcast status per room so `/health` can report load. */
   readonly #roomStatus = new Map<string, RoomStatus>();
+  /** How many retirements each room has already announced, to avoid repeats. */
+  readonly #announcedCompletions = new Map<string, number>();
 
   readonly #ipConnections: ConcurrencyLimiter;
   readonly #createLimiter: RateLimiter;
@@ -169,6 +172,7 @@ export class Hub {
         return;
 
       case 'room.create': {
+        await this.#prepareForAttach(client);
         if (!this.#createLimiter.tryConsume(client.ip)) throw new RoomError('capacity', 'too many rooms');
         if (!isAiLevel(message.aiLevel)) throw new RoomError('invalid-request');
         const grant = await this.#manager.createRoom({
@@ -191,6 +195,7 @@ export class Hub {
       }
 
       case 'room.join': {
+        await this.#prepareForAttach(client);
         let grant;
         try {
           grant = await this.#manager.joinRoom(
@@ -216,6 +221,7 @@ export class Hub {
       }
 
       case 'room.reconnect': {
+        await this.#prepareForAttach(client);
         let result;
         try {
           result = await this.#manager.reconnect(message.code, message.playerToken);
@@ -240,6 +246,7 @@ export class Hub {
       }
 
       case 'room.watch': {
+        await this.#prepareForAttach(client);
         const stored = await this.#manager.getByCode(message.code);
         if (!stored) {
           // Same metering as a failed join so watching cannot be used to sweep
@@ -323,6 +330,22 @@ export class Hub {
     return { roomId: client.roomId, seatIndex: client.seatIndex };
   }
 
+  /**
+   * Attachment messages must never silently abandon a live seat. A stale room
+   * may disappear underneath an open socket, though, so detach and let that
+   * client recover instead of trapping it until a page reload.
+   */
+  async #prepareForAttach(client: ClientState): Promise<void> {
+    if (client.roomId === null) return;
+    const oldRoomId = client.roomId;
+    const stored = await this.#manager.get(oldRoomId);
+    if (client.seatIndex !== null && stored) {
+      throw new RoomError('invalid-request', 'leave the current room first');
+    }
+    this.#detach(client);
+    if (stored) this.#broadcast(stored);
+  }
+
   #attach(client: ClientState, roomId: string, seatIndex: number | null): void {
     this.#detach(client);
     client.roomId = roomId;
@@ -342,6 +365,7 @@ export class Hub {
     if (set && set.size === 0) {
       this.#byRoom.delete(client.roomId);
       this.#roomStatus.delete(client.roomId);
+      this.#announcedCompletions.delete(client.roomId);
     }
     client.roomId = null;
     client.seatIndex = null;
@@ -479,11 +503,42 @@ export class Hub {
       this.#send(client, client.seatIndex !== null && rid !== undefined ? { ...message, rid } : message);
     }
 
-    const winner = stored.record.game?.winner;
-    if (stored.record.status === 'finished' && winner !== null && winner !== undefined) {
-      const over: ServerMessage = { type: 'game.over', room, winner };
-      for (const client of set) this.#send(client, over);
+    this.#announceCompletions(stored, room, set);
+  }
+
+  /**
+   * Announces anyone who left the board since the last broadcast, then the
+   * final placings once the game is settled.
+   *
+   * With three or four players the board keeps going after the first finish, so
+   * these interim messages are the only chance to celebrate it.
+   */
+  #announceCompletions(stored: StoredRoom, room: RoomView, set: ReadonlySet<ClientState>): void {
+    const game = stored.record.game;
+    const completions = game?.completions ?? [];
+    const roomId = stored.record.roomId;
+    const announced = this.#announcedCompletions.get(roomId) ?? 0;
+    this.#announcedCompletions.set(roomId, completions.length);
+
+    // A rematch resets the count, so only ever announce genuinely new ones.
+    for (let i = announced; i < completions.length; i += 1) {
+      const record = completions[i];
+      if (!record) continue;
+      const finished: ServerMessage = {
+        type: 'game.finished',
+        room,
+        player: record.player,
+        reason: record.kind,
+      };
+      for (const client of set) this.#send(client, finished);
     }
+
+    if (stored.record.status !== 'finished' || !game) return;
+    const placings = finalPlacings(game);
+    const winner = placings[0];
+    if (winner === undefined) return;
+    const over: ServerMessage = { type: 'game.over', room, winner, placings };
+    for (const client of set) this.#send(client, over);
   }
 
   #send(client: ClientState, message: ServerMessage): void {

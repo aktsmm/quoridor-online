@@ -13,14 +13,14 @@
   },
   "scripts": {
     "build": "tsc -b packages/engine packages/ai packages/server && npm run build --workspace @quoridor/web",
-    "typecheck": "tsc -b --noEmit packages/engine packages/ai packages/server && npm run typecheck --workspace @quoridor/web",
+    "typecheck": "tsc -b packages/engine packages/ai packages/server && npm run typecheck --workspace @quoridor/web",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
     "format": "prettier --write .",
     "dev:server": "npm run dev --workspace @quoridor/server",
     "dev:web": "npm run dev --workspace @quoridor/web",
-    "clean": "rimraf packages/*/dist packages/*/tsconfig.tsbuildinfo"
+    "clean": "rimraf --glob \"packages/*/dist\" \"packages/*/tsconfig.tsbuildinfo\""
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",

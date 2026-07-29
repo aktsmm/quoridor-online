@@ -159,6 +159,25 @@ describe('room lifecycle', () => {
     const started = await manager.start(filled.stored.record.roomId, 0);
     expect(started.record.seats.filter((s) => s.kind === 'cpu')).toHaveLength(2);
   });
+
+  it('hands a disconnected lobby seat to the CPU when the host starts', async () => {
+    const { manager } = makeManager();
+    const host = await manager.createRoom({
+      playerCount: 2,
+      aiLevel: 'easy',
+      fillWithCpu: false,
+      name: 'Host',
+    });
+    const guest = await manager.joinRoom(host.stored.record.code, 'Guest');
+    await manager.markDisconnected(host.stored.record.roomId, guest.seatIndex);
+
+    const started = await manager.start(host.stored.record.roomId, host.seatIndex);
+    expect(started.record.seats[guest.seatIndex]!.connection).toBe('cpu-controlled');
+    expect(started.record.seats[guest.seatIndex]!.disconnectedAt).toBeNull();
+
+    const back = await manager.reconnect(host.stored.record.code, guest.playerToken);
+    expect(back.stored.record.seats[guest.seatIndex]!.connection).toBe('connected');
+  });
 });
 
 describe('three-player seat layout', () => {
@@ -309,7 +328,7 @@ describe('rematch', () => {
     });
     const roomId = host.stored.record.roomId;
     const code = host.stored.record.code;
-    await manager.joinRoom(code, 'Guest');
+    const guest = await manager.joinRoom(code, 'Guest');
     let stored = await manager.start(roomId, 0);
 
     for (let ply = 0; ply < 60 && stored.record.status === 'playing'; ply += 1) {
@@ -326,7 +345,7 @@ describe('rematch', () => {
     }
 
     expect(stored.record.status).toBe('finished');
-    return { manager, roomId, code, stored };
+    return { manager, roomId, code, stored, guest };
   }
 
   it('starts the next game without breaking up the table', async () => {
@@ -339,7 +358,7 @@ describe('rematch', () => {
     expect(next.record.status).toBe('playing');
     expect(next.record.moveLog).toEqual([]);
     expect(next.record.game!.ply).toBe(0);
-    expect(next.record.game!.winner).toBeNull();
+    expect(next.record.game!.completions).toEqual([]);
     expect(next.record.gameVersion).toBeGreaterThan(before.gameVersion);
 
     // The whole point: same code, same seats, same tokens, so nobody has to
@@ -377,6 +396,19 @@ describe('rematch', () => {
 
     const next = await manager.rematch(roomId, 0);
     expect(next.record.status).toBe('playing');
+  });
+
+  it('hands a disconnected rematch seat to the CPU until its player reconnects', async () => {
+    const { manager, roomId, code, guest } = await finishedRoom();
+    await manager.markDisconnected(roomId, 1);
+
+    const next = await manager.rematch(roomId, 0);
+    expect(next.record.seats[1]!.connection).toBe('cpu-controlled');
+    expect(next.record.seats[1]!.disconnectedAt).toBeNull();
+
+    const back = await manager.reconnect(code, guest.playerToken);
+    expect(back.seatIndex).toBe(1);
+    expect(back.stored.record.seats[1]!.connection).toBe('connected');
   });
 
   it('hands a mid-game leaver to the CPU rather than emptying the seat', async () => {

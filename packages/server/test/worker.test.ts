@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
-import { createGame, tryApplyMove, type GameState } from '@quoridor/engine';
+import { createGame, isGameOver, tryApplyMove, type GameState } from '@quoridor/engine';
 import { WorkerAiPool, fallbackMove } from '../src/ai/pool.js';
 
 const require = createRequire(import.meta.url);
@@ -24,7 +24,7 @@ describeBuilt('worker thread AI pool', () => {
       let plies = 0;
       let worstLagMs = 0;
 
-      while (state.winner === null && plies < 400) {
+      while (!isGameOver(state) && plies < 400) {
         // Measure how late a 10 ms timer fires while the search runs; if the
         // search were on this thread it would be starved.
         const scheduled = Date.now();
@@ -47,7 +47,7 @@ describeBuilt('worker thread AI pool', () => {
         plies += 1;
       }
 
-      expect(state.winner).not.toBeNull();
+      expect(isGameOver(state)).toBe(true);
       expect(worstLagMs).toBeLessThan(500);
     } finally {
       await pool.close();

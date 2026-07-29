@@ -7,6 +7,7 @@ import { Hub, CLOSE_POLICY, type HubLogger } from './ws/hub.js';
 import { RoomManager } from './rooms/manager.js';
 import type { RoomStore } from './rooms/store.js';
 import type { AiPool } from './ai/pool.js';
+import { PROTOCOL_VERSION } from './ws/protocol.js';
 
 export interface AppParts {
   config: ServerConfig;
@@ -54,6 +55,7 @@ export function createApp(parts: AppParts): App {
     uptimeMs: Date.now() - startedAt,
     connections: hub.connectionCount,
     activeGames: hub.activeGameCount,
+    protocolVersion: PROTOCOL_VERSION,
   }));
   fastify.get('/', () => ({ service: 'quoridor-server' }));
 

@@ -1,11 +1,25 @@
 import type { Move, PlayerCount } from '@quoridor/engine';
 import { Connection, type ConnectionStatus } from '../net/connection.js';
-import type { AiLevel, ErrorCode, RoomView, ServerMessage } from '../net/protocol.js';
+import {
+  PROTOCOL_VERSION,
+  type AiLevel,
+  type ErrorCode,
+  type RoomView,
+  type ServerMessage,
+} from '../net/protocol.js';
 import { clearCredentials, loadCredentials, saveCredentials, type Credentials } from './storage.js';
 
 export type Screen = 'home' | 'lobby' | 'game';
 
 export type SessionRole = 'player' | 'spectator';
+
+/** A player reaching home or giving up, announced while the game carries on. */
+export interface FinishNotice {
+  readonly player: number;
+  readonly reason: 'goal' | 'resign';
+  /** Timestamp so a repeat of the same seat still restarts the banner timer. */
+  readonly at: number;
+}
 
 export interface SessionSnapshot {
   readonly status: ConnectionStatus;
@@ -20,6 +34,8 @@ export interface SessionSnapshot {
   readonly busy: boolean;
   /** Set while the local player's move is shown before the server confirms it. */
   readonly optimistic: boolean;
+  /** Somebody just left the board; shown briefly while the game carries on. */
+  readonly notice: FinishNotice | null;
 }
 
 export interface CreateOptions {
@@ -43,6 +59,7 @@ const EMPTY: SessionSnapshot = {
   error: null,
   busy: false,
   optimistic: false,
+  notice: null,
 };
 
 /**
@@ -154,6 +171,23 @@ export class SessionStore {
     this.#patch({ error: null });
   }
 
+  dismissNotice(): void {
+    this.#patch({ notice: null });
+  }
+
+  /** Gives up the game. Only offered once every wall has been spent. */
+  resign(): void {
+    const room = this.#snapshot.room;
+    if (!room?.game) return;
+    this.#patch({ busy: true, error: null });
+    this.#send({
+      type: 'game.move',
+      rid: this.#connection.nextRid(),
+      expectedGameVersion: room.gameVersion,
+      move: { type: 'resign' },
+    });
+  }
+
   /**
    * Applies the move locally first so the board responds to the tap, then lets
    * the server's broadcast overwrite it. Any error rolls straight back.
@@ -190,6 +224,18 @@ export class SessionStore {
   #handle(message: ServerMessage): void {
     switch (message.type) {
       case 'hello':
+        if (message.protocolVersion !== PROTOCOL_VERSION) {
+          this.#connection.close();
+          this.#patch({
+            greeted: false,
+            busy: false,
+            error: {
+              code: 'protocol-mismatch',
+              message: `expected protocol ${PROTOCOL_VERSION}, got ${message.protocolVersion}`,
+            },
+          });
+          return;
+        }
         this.#patch({ greeted: true });
         return;
 
@@ -216,11 +262,30 @@ export class SessionStore {
         return;
       }
 
+      case 'game.finished': {
+        this.#serverRoom = message.room;
+        this.#patch({
+          room: message.room,
+          optimistic: false,
+          busy: false,
+          error: null,
+          notice: { player: message.player, reason: message.reason, at: Date.now() },
+        });
+        return;
+      }
+
       case 'room.state':
       case 'game.state':
       case 'game.over': {
         this.#serverRoom = message.room;
-        this.#patch({ room: message.room, optimistic: false, busy: false, error: null });
+        this.#patch({
+          room: message.room,
+          optimistic: false,
+          busy: false,
+          error: null,
+          // A fresh deal has nobody to announce, so drop any leftover banner.
+          ...(message.room.game?.completions.length ? {} : { notice: null }),
+        });
         // The server turns the empty seats into CPUs on start, so solo play can
         // deal itself the moment the lobby lands rather than showing a code the
         // player never needed.
@@ -257,7 +322,7 @@ export class SessionStore {
     this.#serverRoom = null;
     this.#autoStart = false;
     clearCredentials();
-    this.#patch({ room: null, seatIndex: null, role: 'player', optimistic: false, busy: false, error: null });
+    this.#patch({ room: null, seatIndex: null, role: 'player', optimistic: false, busy: false, error: null, notice: null });
   }
 
   #send(message: Parameters<Connection['send']>[0]): boolean {

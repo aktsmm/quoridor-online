@@ -1,5 +1,6 @@
+import { isActive, type GameState } from '@quoridor/engine';
 import { useState } from 'react';
-import { useI18n } from '../i18n/index.js';
+import { useI18n, type MessageKey } from '../i18n/index.js';
 import type { RoomView } from '../net/protocol.js';
 import { displayName, openSeatCount, seatLabelKey } from './shared.js';
 
@@ -93,10 +94,13 @@ export function Roster({
   youIndex: number | null;
 }): React.JSX.Element {
   const { t } = useI18n();
+  const game = room.game;
   return (
     <ul className="roster" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
       {room.seats.map((seat) => {
         const empty = seat.connection === 'empty';
+        const player = game?.players[seat.index];
+        const out = game !== null && !isActive(game, seat.index);
         return (
           <li key={seat.index} className="roster__row">
             <span
@@ -106,10 +110,20 @@ export function Roster({
             <span className="roster__name">
               {empty ? t('lobbySeatEmpty') : displayName(room, seat.index, youIndex, t)}
             </span>
+            {player && !empty && (
+              <span
+                className={`roster__walls${out ? ' roster__walls--out' : ''}`}
+                title={t('rosterWallsLeft')}
+              >
+                <span aria-hidden="true">▮</span>
+                {player.wallsLeft}
+              </span>
+            )}
             <span className="roster__meta">
               <span className="tag">{t(seatLabelKey(seat.seat))}</span>
               {seat.index === youIndex && <span className="tag tag--you">{t('lobbyYou')}</span>}
               {room.hostSeat === seat.index && <span className="tag tag--host">{t('lobbyHost')}</span>}
+              {out && <span className="tag tag--done">{t(finishTagKey(game, seat.index))}</span>}
               {seat.connection === 'disconnected' && (
                 <span className="tag tag--warn">{t('gameDisconnected')}</span>
               )}
@@ -122,4 +136,10 @@ export function Roster({
       })}
     </ul>
   );
+}
+
+/** Whether a seat left by finishing or by giving up. */
+function finishTagKey(game: GameState | null, index: number): MessageKey {
+  const record = game?.completions.find((c) => c.player === index);
+  return record?.kind === 'resign' ? 'rosterResigned' : 'rosterFinished';
 }

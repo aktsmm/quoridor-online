@@ -22,11 +22,13 @@ export type ServerMessage =
   | { type: 'watching'; rid?: number; roomId: string; code: string }
   | { type: 'room.state'; rid?: number; room: RoomView }
   | { type: 'game.state'; rid?: number; room: RoomView }
-  | { type: 'game.over'; room: RoomView; winner: number }
+  /** Somebody left the board but the game goes on. */
+  | { type: 'game.finished'; room: RoomView; player: number; reason: 'goal' | 'resign' }
+  | { type: 'game.over'; room: RoomView; winner: number; placings: number[] }
   | { type: 'error'; rid?: number; code: RoomErrorCode | 'rate-limited' | 'bad-message' | 'internal'; message: string }
   | { type: 'pong'; rid?: number; serverTime: number };
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 3;
 
 /** Public projection of a room. Deliberately free of any secret material. */
 export interface RoomView {

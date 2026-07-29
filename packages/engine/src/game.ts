@@ -97,16 +97,71 @@ export function createGame(options: CreateGameOptions): GameState {
     return { seat, pos: setup.start, wallsLeft: wallsPerPlayer, goal: setup.goal };
   });
 
-  return { playerCount, players, walls: [], turn: firstTurn, winner: null, ply: 0 };
+  return {
+    playerCount,
+    players,
+    walls: [],
+    turn: firstTurn,
+    firstTurn,
+    completions: [],
+    ply: 0,
+  };
 }
 
+/** Whether the player is still in the game (has neither finished nor given up). */
+export function isActive(state: GameState, playerIndex: number): boolean {
+  return !state.completions.some((c) => c.player === playerIndex);
+}
+
+/** Indices of everyone still playing, in seat order. */
+export function activePlayers(state: GameState): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < state.playerCount; i++) if (isActive(state, i)) out.push(i);
+  return out;
+}
+
+/**
+ * Final placings, best first.
+ *
+ * Whoever reaches their goal line is placed in arrival order, the last player
+ * left standing takes the next place, and everyone who gave up is placed from
+ * the bottom in the order they did so - giving up first costs you the most.
+ * Returns an empty array while the game is still running.
+ */
+export function finalPlacings(state: GameState): number[] {
+  if (!isGameOver(state)) return [];
+  const goals = state.completions.filter((c) => c.kind === 'goal').map((c) => c.player);
+  const resigned = state.completions.filter((c) => c.kind === 'resign').map((c) => c.player);
+  return [...goals, ...activePlayers(state), ...resigned.reverse()];
+}
+
+/** Who won, or null while the game is still running. */
+export function winnerOf(state: GameState): number | null {
+  return finalPlacings(state)[0] ?? null;
+}
+
+/** Giving up is only allowed once you have no walls left to play with. */
+export function canResign(state: GameState, playerIndex = state.turn): boolean {
+  if (isGameOver(state)) return false;
+  if (!isActive(state, playerIndex)) return false;
+  if (state.turn !== playerIndex) return false;
+  const player = state.players[playerIndex];
+  return player !== undefined && player.wallsLeft === 0;
+}
+
+/** Cells occupied by pawns that are still on the board. Retired pawns are gone. */
 function playerCells(state: GameState): number[] {
-  return state.players.map((p) => cellIndex(p.pos.c, p.pos.r));
+  const cells: number[] = [];
+  state.players.forEach((p, i) => {
+    if (isActive(state, i)) cells.push(cellIndex(p.pos.c, p.pos.r));
+  });
+  return cells;
 }
 
 /** Squares the player to move may step to. */
 export function legalPawnMoves(state: GameState, playerIndex = state.turn): Pos[] {
-  if (state.winner !== null) return [];
+  if (isGameOver(state)) return [];
+  if (!isActive(state, playerIndex)) return [];
   const player = state.players[playerIndex];
   if (!player) return [];
 
@@ -144,6 +199,7 @@ export function wallRejection(
 
   const player = state.players[playerIndex];
   if (!player || player.wallsLeft <= 0) return 'no-walls-left';
+  if (!isActive(state, playerIndex)) return 'no-walls-left';
 
   const index = board ?? Board.from(state.walls);
   if (!index.fitsWithoutOverlap(wall)) return 'overlaps-existing-wall';
@@ -151,7 +207,11 @@ export function wallRejection(
   const finder = pathfinder ?? new Pathfinder();
   index.add(wall);
   try {
-    for (const other of state.players) {
+    // Retired players no longer need a route, so their old goal cannot veto a wall.
+    for (let i = 0; i < state.playerCount; i++) {
+      if (!isActive(state, i)) continue;
+      const other = state.players[i];
+      if (!other) continue;
       const from = cellIndex(other.pos.c, other.pos.r);
       if (!finder.canReachGoal(index, from, other.goal)) return 'blocks-a-player';
     }
@@ -162,12 +222,13 @@ export function wallRejection(
 }
 
 export function isLegalWall(state: GameState, wall: Wall, playerIndex = state.turn): boolean {
-  return state.winner === null && wallRejection(state, wall, playerIndex) === null;
+  return !isGameOver(state) && wallRejection(state, wall, playerIndex) === null;
 }
 
 /** Every wall the player to move may legally place. */
 export function legalWalls(state: GameState, playerIndex = state.turn): Wall[] {
-  if (state.winner !== null) return [];
+  if (isGameOver(state)) return [];
+  if (!isActive(state, playerIndex)) return [];
   const player = state.players[playerIndex];
   if (!player || player.wallsLeft <= 0) return [];
 
@@ -195,11 +256,12 @@ export type ApplyResult =
 
 /** Validates and applies a move, returning a new state. Never mutates `state`. */
 export function tryApplyMove(state: GameState, move: Move): ApplyResult {
-  if (state.winner !== null) return { ok: false, reason: 'game-over' };
+  if (isGameOver(state)) return { ok: false, reason: 'game-over' };
 
   const playerIndex = state.turn;
   const player = state.players[playerIndex];
   if (!player) return { ok: false, reason: 'no-such-player' };
+  if (!isActive(state, playerIndex)) return { ok: false, reason: 'already-finished' };
 
   if (move.type === 'pawn') {
     if (!isPos(move.to)) return { ok: false, reason: 'out-of-range' };
@@ -211,13 +273,9 @@ export function tryApplyMove(state: GameState, move: Move): ApplyResult {
     const reachedGoal = isGoalCell(player.goal, cellIndex(move.to.c, move.to.r));
     return {
       ok: true,
-      state: {
-        ...state,
-        players,
-        turn: reachedGoal ? playerIndex : nextTurn(state),
-        winner: reachedGoal ? playerIndex : null,
-        ply: state.ply + 1,
-      },
+      state: reachedGoal
+        ? retire({ ...state, players }, playerIndex, 'goal')
+        : { ...state, players, turn: nextTurn(state, playerIndex), ply: state.ply + 1 },
     };
   }
 
@@ -234,13 +292,28 @@ export function tryApplyMove(state: GameState, move: Move): ApplyResult {
         ...state,
         players,
         walls: [...state.walls, { ...move.wall }],
-        turn: nextTurn(state),
+        turn: nextTurn(state, playerIndex),
         ply: state.ply + 1,
       },
     };
   }
 
+  if (move.type === 'resign') {
+    if (!canResign(state, playerIndex)) return { ok: false, reason: 'resign-not-allowed' };
+    return { ok: true, state: retire(state, playerIndex, 'resign') };
+  }
+
   return { ok: false, reason: 'unknown-move-type' };
+}
+
+/** Takes a player off the board and hands the turn to whoever is left. */
+function retire(state: GameState, playerIndex: number, kind: 'goal' | 'resign'): GameState {
+  const ply = state.ply + 1;
+  const completions = [...state.completions, { player: playerIndex, kind, ply }];
+  const next: GameState = { ...state, completions, ply };
+  // When the game is over there is nobody to hand the turn to, so it rests on
+  // the player who just left.
+  return { ...next, turn: isGameOver(next) ? playerIndex : nextTurn(next, playerIndex) };
 }
 
 export function applyMove(state: GameState, move: Move): GameState {
@@ -249,8 +322,14 @@ export function applyMove(state: GameState, move: Move): GameState {
   return result.state;
 }
 
-function nextTurn(state: GameState): number {
-  return (state.turn + 1) % state.playerCount;
+/** The next player still in the game, skipping anyone who has retired. */
+function nextTurn(state: GameState, from: number): number {
+  const n = state.playerCount;
+  for (let step = 1; step <= n; step++) {
+    const candidate = (from + step) % n;
+    if (isActive(state, candidate)) return candidate;
+  }
+  return from;
 }
 
 /** Steps the player still needs, or -1 when walled off (which never happens in legal play). */
@@ -261,24 +340,40 @@ export function distanceToGoal(state: GameState, playerIndex: number): number {
   return new Pathfinder().distanceToGoal(board, cellIndex(player.pos.c, player.pos.r), player.goal);
 }
 
+/**
+ * Whether the game has finished.
+ *
+ * A two-player game ends the moment somebody retires; with three or four the
+ * board keeps going until only one player is left, so everyone gets a placing.
+ */
 export function isGameOver(state: GameState): boolean {
-  return state.winner !== null;
+  return state.completions.length >= state.playerCount - 1;
 }
 
 /**
  * Which seat played ply `index` (0-based), for colouring the move log.
  *
- * The first mover is randomised per game and is not stored anywhere, so it has
- * to be recovered from the state. While the game runs `turn` has advanced once
- * per ply; once someone wins, `turn` stops on the winner instead, so the last
- * ply is the anchor in that case.
+ * Turn order skips retired players, so this replays it from the recorded first
+ * mover rather than trying to work backwards from the current turn.
  */
 export function moverAtPly(state: GameState, index: number): number {
   const n = state.playerCount;
-  const first =
-    state.winner === null
-      ? (((state.turn - state.ply) % n) + n) % n
-      : (((state.winner - (state.ply - 1)) % n) + n) % n;
-  return (first + index) % n;
+  let mover = ((state.firstTurn % n) + n) % n;
+  for (let played = 0; played < index; played++) {
+    const after = played + 1;
+    const retired = new Set(
+      state.completions.filter((c) => c.ply <= after).map((c) => c.player),
+    );
+    let next = mover;
+    for (let step = 1; step <= n; step++) {
+      const candidate = (mover + step) % n;
+      if (!retired.has(candidate)) {
+        next = candidate;
+        break;
+      }
+    }
+    mover = next;
+  }
+  return mover;
 }
 

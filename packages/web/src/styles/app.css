@@ -398,6 +398,30 @@
   color: var(--orange);
 }
 
+.tag--done {
+  background: color-mix(in srgb, var(--label) 14%, transparent);
+  color: var(--label);
+}
+
+/* Wall stock next to each name, so the whole table is readable at a glance. */
+.roster__walls {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  font-size: 12.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--label);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--label) 10%, transparent);
+}
+
+.roster__walls--out {
+  opacity: 0.45;
+}
+
 /* ---------- game ---------- */
 
 .game {
@@ -445,11 +469,15 @@
  */
 .readout {
   margin: 0;
-  min-height: 22px;
+  /* Fixed so a one-line hint and a two-line hint never shift the board mid-drag. */
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 0 4px;
-  font-size: 15px;
+  font-size: 18px;
   font-weight: 600;
-  line-height: 22px;
+  line-height: 1.35;
   text-align: center;
   color: var(--label);
   transition: color 0.12s ease;
@@ -631,6 +659,71 @@
   font-weight: 800;
   letter-spacing: -0.03em;
   margin-top: 8px;
+}
+
+.result__subtitle {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--label);
+  margin: 14px 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.placings {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+
+.placings__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--fill);
+  border-left: 4px solid var(--seat-color);
+}
+
+.placings__row--you {
+  background: color-mix(in srgb, var(--seat-color) 14%, var(--fill));
+}
+
+.placings__place {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--seat-color);
+  flex: none;
+  min-width: 34px;
+}
+
+.placings__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sits between the turn bar and the board; never overlaps the playing area. */
+.banner {
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--label);
+  background: var(--fill);
+}
+
+.banner--notice {
+  color: var(--seat-color);
+  background: color-mix(in srgb, var(--seat-color) 14%, transparent);
 }
 
 .toast {

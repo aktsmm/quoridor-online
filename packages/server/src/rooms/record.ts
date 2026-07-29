@@ -2,7 +2,7 @@ import type { AiLevel } from '@quoridor/ai';
 import type { GameState, PlayerCount, SeatDirection } from '@quoridor/engine';
 
 /** Bumped whenever the persisted shape changes; older records are discarded. */
-export const ROOM_SCHEMA_VERSION = 1;
+export const ROOM_SCHEMA_VERSION = 2;
 
 export type RoomStatus = 'lobby' | 'playing' | 'finished';
 

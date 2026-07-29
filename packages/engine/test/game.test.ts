@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  activePlayers,
   applyMove,
+  canResign,
   createGame,
   defaultSeats,
   defaultWallsPerPlayer,
   distanceToGoal,
+  finalPlacings,
+  isActive,
+  isGameOver,
   isLegalWall,
   legalMoves,
   legalPawnMoves,
@@ -13,6 +18,7 @@ import {
   seatsExcluding,
   tryApplyMove,
   wallRejection,
+  winnerOf,
 } from '../src/game.js';
 import { posToNotation, notationToPos } from '../src/coords.js';
 import { IllegalMoveError, type GameState, type Pos, type Wall } from '../src/types.js';
@@ -39,7 +45,8 @@ describe('game setup', () => {
     ]);
     expect(game.players.every((p) => p.wallsLeft === 10)).toBe(true);
     expect(game.turn).toBe(0);
-    expect(game.winner).toBeNull();
+    expect(game.completions).toEqual([]);
+    expect(isGameOver(game)).toBe(false);
   });
 
   it('seats three players on e1, a5 and i5 with seven walls each', () => {
@@ -150,7 +157,7 @@ describe('turn handling', () => {
 });
 
 describe('winning', () => {
-  it('ends the game the moment a pawn reaches its goal row', () => {
+  it('ends a two-player game the moment a pawn reaches its goal row', () => {
     let game = createGame({ playerCount: 2 });
     game = {
       ...game,
@@ -160,7 +167,9 @@ describe('winning', () => {
       ],
     };
     const finished = applyMove(game, { type: 'pawn', to: at('e9') });
-    expect(finished.winner).toBe(0);
+    expect(winnerOf(finished)).toBe(0);
+    expect(finalPlacings(finished)).toEqual([0, 1]);
+    expect(isGameOver(finished)).toBe(true);
     expect(legalMoves(finished)).toEqual([]);
     expect(tryApplyMove(finished, { type: 'pawn', to: at('e8') })).toEqual({
       ok: false,
@@ -168,7 +177,7 @@ describe('winning', () => {
     });
   });
 
-  it('ends the game when a side player reaches its goal column', () => {
+  it('keeps a four-player game running until only one runner is left', () => {
     let game = createGame({ playerCount: 4, firstTurn: 1 });
     game = {
       ...game,
@@ -178,8 +187,51 @@ describe('winning', () => {
         return p;
       }),
     };
-    const finished = applyMove(game, { type: 'pawn', to: at('i5') });
-    expect(finished.winner).toBe(1);
+    const first = applyMove(game, { type: 'pawn', to: at('i5') });
+    expect(first.completions).toEqual([{ player: 1, kind: 'goal', ply: 1 }]);
+    expect(isGameOver(first)).toBe(false);
+    expect(isActive(first, 1)).toBe(false);
+    // The finisher is skipped from here on, so play passes straight to seat 2.
+    expect(first.turn).toBe(2);
+    expect(activePlayers(first)).toEqual([0, 2, 3]);
+    expect(legalMoves(first).length).toBeGreaterThan(0);
+  });
+
+  it('declares the last runner the winner once everyone else is out', () => {
+    let game = createGame({ playerCount: 3, firstTurn: 0 });
+    game = {
+      ...game,
+      players: game.players.map((p, i) => {
+        if (i === 0) return { ...p, pos: at('e8') };
+        if (i === 1) return { ...p, pos: at('h5'), wallsLeft: 0 };
+        return p;
+      }),
+    };
+    game = applyMove(game, { type: 'pawn', to: at('e9') });
+    expect(game.turn).toBe(1);
+    game = applyMove(game, { type: 'resign' });
+    expect(isGameOver(game)).toBe(true);
+    // Goal first, then the survivor, then the quitter at the bottom.
+    expect(finalPlacings(game)).toEqual([0, 2, 1]);
+    expect(winnerOf(game)).toBe(0);
+  });
+
+  it('only allows resigning on your own turn with no walls left', () => {
+    const game = createGame({ playerCount: 2 });
+    expect(canResign(game, 0)).toBe(false);
+    expect(tryApplyMove(game, { type: 'resign' })).toEqual({
+      ok: false,
+      reason: 'resign-not-allowed',
+    });
+    const spent = {
+      ...game,
+      players: game.players.map((p, i) => (i === 0 ? { ...p, wallsLeft: 0 } : p)),
+    };
+    expect(canResign(spent, 0)).toBe(true);
+    expect(canResign(spent, 1)).toBe(false);
+    const after = applyMove(spent, { type: 'resign' });
+    expect(winnerOf(after)).toBe(1);
+    expect(after.completions).toEqual([{ player: 0, kind: 'resign', ply: 1 }]);
   });
 
   it('reports distance to goal from the opening position', () => {
@@ -284,7 +336,10 @@ describe('legal move generation', () => {
 
   it('returns nothing once the game is over', () => {
     const game = createGame({ playerCount: 2 });
-    const over: GameState = { ...game, winner: 0 };
+    const over: GameState = {
+      ...game,
+      completions: [{ player: 0, kind: 'goal', ply: 1 }],
+    };
     expect(legalPawnMoves(over)).toEqual([]);
     expect(legalWalls(over)).toEqual([]);
     expect(legalMoves(over)).toEqual([]);
@@ -322,10 +377,10 @@ describe('moverAtPly', () => {
   });
 
   it('still attributes correctly once someone has won', () => {
-    // The winner keeps the turn instead of passing it on, so the finished
-    // state has to be read from the winner rather than from `turn`.
+    // The finisher keeps the turn instead of passing it on, so the finished
+    // state has to be read from the completions rather than from `turn`.
     let game = createGame({ playerCount: 2, firstTurn: 1 });
-    while (game.winner === null) {
+    while (!isGameOver(game)) {
       const me = game.players[game.turn]!;
       const forward = legalPawnMoves(game).reduce((best, pos) => {
         const d = (p: Pos): number =>
@@ -334,8 +389,27 @@ describe('moverAtPly', () => {
       });
       game = applyMove(game, { type: 'pawn', to: forward });
     }
-    expect(game.winner).not.toBeNull();
-    expect(moverAtPly(game, game.ply - 1)).toBe(game.winner);
+    expect(winnerOf(game)).not.toBeNull();
+    expect(moverAtPly(game, game.ply - 1)).toBe(winnerOf(game));
     expect(moverAtPly(game, 0)).toBe(1);
+  });
+
+  it('keeps attributing plies after a player has left the board', () => {
+    // Seat 1 finishes early, so every later ply belongs to 0 or 2 only.
+    let game = createGame({ playerCount: 3, firstTurn: 1 });
+    game = {
+      ...game,
+      players: game.players.map((p, i) => {
+        if (i === 1) return { ...p, pos: at('h5') };
+        // Seat 2 starts on i5, which is exactly where seat 1 is heading.
+        if (i === 2) return { ...p, pos: at('h1') };
+        return p;
+      }),
+    };
+    game = applyMove(game, { type: 'pawn', to: at('i5') }); // ply 0: seat 1 goes home
+    game = applyMove(game, { type: 'pawn', to: legalPawnMoves(game)[0]! }); // ply 1: seat 2
+    game = applyMove(game, { type: 'pawn', to: legalPawnMoves(game)[0]! }); // ply 2: seat 0
+    game = applyMove(game, { type: 'pawn', to: legalPawnMoves(game)[0]! }); // ply 3: seat 2
+    expect([0, 1, 2, 3].map((i) => moverAtPly(game, i))).toEqual([1, 2, 0, 2]);
   });
 });

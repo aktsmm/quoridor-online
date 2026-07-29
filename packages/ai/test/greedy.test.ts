@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  activePlayers,
   createGame,
   tryApplyMove,
   describeState,
   cellIndex,
+  isGameOver,
+  winnerOf,
   type GameState,
   type Move,
   type PlayerCount,
@@ -28,7 +31,7 @@ function playToCompletion(
   let state = createGame({ playerCount });
   let plies = 0;
 
-  while (state.winner === null && plies < maxPlies) {
+  while (!isGameOver(state) && plies < maxPlies) {
     const move = greedyMove(state, rng);
     const result = tryApplyMove(state, move);
     expect(result.ok, `AI produced an illegal move: ${JSON.stringify(move)}`).toBe(true);
@@ -36,7 +39,11 @@ function playToCompletion(
     state = result.state;
     plies += 1;
 
-    const cells = state.players.map((p) => cellIndex(p.pos.c, p.pos.r));
+    // Retired pawns keep their last square in the record but are off the board.
+    const cells = activePlayers(state).map((i) => {
+      const p = state.players[i]!;
+      return cellIndex(p.pos.c, p.pos.r);
+    });
     expect(new Set(cells).size, describeState(state)).toBe(cells.length);
   }
 
@@ -47,21 +54,21 @@ describe('greedy fallback AI', () => {
   it('finishes 2-player games', () => {
     for (let seed = 1; seed <= 20; seed += 1) {
       const { final, plies } = playToCompletion(seed * 1013, 2);
-      expect(final.winner, `stalled after ${plies} plies: ${describeState(final)}`).not.toBeNull();
+      expect(isGameOver(final), `stalled after ${plies} plies: ${describeState(final)}`).toBe(true);
     }
   });
 
   it('finishes 3-player games', () => {
     for (let seed = 1; seed <= 15; seed += 1) {
       const { final } = playToCompletion(seed * 2027, 3);
-      expect(final.winner).not.toBeNull();
+      expect(isGameOver(final)).toBe(true);
     }
   });
 
   it('finishes 4-player games', () => {
     for (let seed = 1; seed <= 15; seed += 1) {
       const { final } = playToCompletion(seed * 3041, 4);
-      expect(final.winner).not.toBeNull();
+      expect(isGameOver(final)).toBe(true);
     }
   });
 
@@ -84,7 +91,7 @@ describe('greedy fallback AI', () => {
     const move = greedyMove(state, makeRng(7));
     expect(move).toEqual({ type: 'pawn', to: { c: 4, r: 8 } });
     const after = tryApplyMove(state, move);
-    expect(after.ok && after.state.winner).toBe(0);
+    expect(after.ok && winnerOf(after.state)).toBe(0);
   });
 
   it('is deterministic for a given seed', () => {
@@ -96,7 +103,7 @@ describe('greedy fallback AI', () => {
     const rng = makeRng(0xabcdef);
     let state = createGame({ playerCount: 4 });
 
-    for (let ply = 0; ply < 200 && state.winner === null; ply += 1) {
+    for (let ply = 0; ply < 200 && !isGameOver(state); ply += 1) {
       const move = greedyMove(state, rng);
       const result = tryApplyMove(state, move);
       expect(result.ok, `${JSON.stringify(move)} in ${describeState(state)}`).toBe(true);

@@ -6,7 +6,7 @@
  */
 import type { GameState, Move, PlayerCount, SeatDirection } from '@quoridor/engine';
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 3;
 
 export type AiLevel = 'easy' | 'normal' | 'hard';
 export type RoomStatus = 'lobby' | 'playing' | 'finished';
@@ -23,6 +23,7 @@ export type ErrorCode =
   | 'invalid-request'
   | 'rate-limited'
   | 'bad-message'
+  | 'protocol-mismatch'
   | 'internal';
 
 export interface SeatView {
@@ -73,6 +74,7 @@ export type ServerMessage =
   | { type: 'watching'; rid?: number; roomId: string; code: string }
   | { type: 'room.state'; rid?: number; room: RoomView }
   | { type: 'game.state'; rid?: number; room: RoomView }
-  | { type: 'game.over'; room: RoomView; winner: number }
+  | { type: 'game.finished'; room: RoomView; player: number; reason: 'goal' | 'resign' }
+  | { type: 'game.over'; room: RoomView; winner: number; placings: number[] }
   | { type: 'error'; rid?: number; code: ErrorCode; message: string }
   | { type: 'pong'; rid?: number; serverTime: number };

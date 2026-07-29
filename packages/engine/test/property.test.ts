@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  activePlayers,
   createGame,
   distanceToGoal,
+  finalPlacings,
+  isActive,
+  isGameOver,
   legalPawnMoves,
   legalWalls,
   seatsExcluding,
@@ -18,7 +22,13 @@ import { makeRng, randomInt } from './helpers/rng.js';
 function assertInvariants(state: GameState): void {
   const context = describeState(state);
 
-  const cells = state.players.map((p) => cellIndex(p.pos.c, p.pos.r));
+  // Retired pawns keep their last coordinates for the log but are off the
+  // board, so only the runners still in play must occupy distinct squares.
+  const live = activePlayers(state);
+  const cells = live.map((i) => {
+    const p = state.players[i]!;
+    return cellIndex(p.pos.c, p.pos.r);
+  });
   expect(new Set(cells).size, `two pawns share a square: ${context}`).toBe(cells.length);
 
   const keys = state.walls.map(wallKey);
@@ -35,6 +45,9 @@ function assertInvariants(state: GameState): void {
 
   for (const player of state.players) {
     expect(player.wallsLeft, `negative wall count: ${context}`).toBeGreaterThanOrEqual(0);
+  }
+  for (const index of live) {
+    const player = state.players[index]!;
     expect(
       referenceReaches(state.walls, player.pos, player.goal),
       `player ${player.seat} is sealed off: ${context}`,
@@ -43,6 +56,9 @@ function assertInvariants(state: GameState): void {
 
   expect(state.turn, context).toBeGreaterThanOrEqual(0);
   expect(state.turn, context).toBeLessThan(state.playerCount);
+  if (!isGameOver(state)) {
+    expect(isActive(state, state.turn), `retired player is on move: ${context}`).toBe(true);
+  }
 }
 
 /**
@@ -66,7 +82,7 @@ function playRandomGame(seed: number, playerCount: PlayerCount, maxPlies = 400):
 
   const totalWalls = state.players.reduce((sum, p) => sum + p.wallsLeft, 0);
 
-  while (state.winner === null && state.ply < maxPlies) {
+  while (!isGameOver(state) && state.ply < maxPlies) {
     const move = chooseMove(state, rng);
     const result = tryApplyMove(state, move);
     expect(result.ok, `engine rejected its own legal move ${JSON.stringify(move)}`).toBe(true);
@@ -119,17 +135,21 @@ describe('random self-play keeps every invariant', () => {
       let finished = 0;
       for (let seed = 1; seed <= 40; seed += 1) {
         const final = playRandomGame(seed * 7919 + playerCount, playerCount);
-        if (final.winner !== null) {
-          finished += 1;
-          const winner = final.players[final.winner]!;
+        if (!isGameOver(final)) continue;
+        finished += 1;
+        // Everyone but the last runner must have walked onto their own line;
+        // this policy never resigns, so every completion is a goal.
+        expect(final.completions.length, describeState(final)).toBe(playerCount - 1);
+        for (const record of final.completions) {
+          expect(record.kind).toBe('goal');
+          const player = final.players[record.player]!;
           const reached =
-            winner.goal.kind === 'row'
-              ? winner.pos.r === winner.goal.value
-              : winner.pos.c === winner.goal.value;
-          expect(reached, `declared winner is not on its goal line: ${describeState(final)}`).toBe(
-            true,
-          );
+            player.goal.kind === 'row'
+              ? player.pos.r === player.goal.value
+              : player.pos.c === player.goal.value;
+          expect(reached, `finisher is not on its goal line: ${describeState(final)}`).toBe(true);
         }
+        expect(new Set(finalPlacings(final)).size).toBe(playerCount);
       }
       // A shortest-path policy should finish essentially every game.
       expect(finished).toBeGreaterThanOrEqual(38);
@@ -146,12 +166,12 @@ describe('legal wall enumeration', () => {
       let state = createGame({ playerCount });
 
       // Play a handful of plies to reach a non-trivial position.
-      for (let ply = 0; ply < 12 && state.winner === null; ply += 1) {
+      for (let ply = 0; ply < 12 && !isGameOver(state); ply += 1) {
         const result = tryApplyMove(state, chooseMove(state, rng));
         if (!result.ok) break;
         state = result.state;
       }
-      if (state.winner !== null) continue;
+      if (isGameOver(state)) continue;
 
       const engine = new Set(legalWalls(state).map(wallKey));
       const player = state.players[state.turn]!;
@@ -159,9 +179,10 @@ describe('legal wall enumeration', () => {
       for (const wall of allWalls()) {
         const overlaps = state.walls.some((w) => !wallsCompatible(w, wall));
         const duplicate = state.walls.some((w) => wallKey(w) === wallKey(wall));
-        const sealsSomeone = state.players.some(
-          (p) => !referenceReaches([...state.walls, wall], p.pos, p.goal),
-        );
+        const sealsSomeone = activePlayers(state).some((i) => {
+          const p = state.players[i]!;
+          return !referenceReaches([...state.walls, wall], p.pos, p.goal);
+        });
         const expected = player.wallsLeft > 0 && !overlaps && !duplicate && !sealsSomeone;
         expect(
           engine.has(wallKey(wall)),

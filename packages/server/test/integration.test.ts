@@ -3,6 +3,7 @@ import {
   distanceToGoal,
   legalPawnMoves,
   tryApplyMove,
+  winnerOf,
   type GameState,
   type Move,
 } from '@quoridor/engine';
@@ -11,7 +12,7 @@ import { DEFAULT_LIMITS, type ServerConfig } from '../src/config.js';
 import { MemoryRoomStore } from '../src/rooms/store.js';
 import { InlineAiPool } from '../src/ai/pool.js';
 import { CLOSE_POLICY, CLOSE_SUPERSEDED } from '../src/ws/hub.js';
-import type { RoomView, ServerMessage } from '../src/ws/protocol.js';
+import { PROTOCOL_VERSION, type RoomView, type ServerMessage } from '../src/ws/protocol.js';
 import { TestClient } from './helpers/client.js';
 
 function makeConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
@@ -252,7 +253,7 @@ describe('websocket vertical slice', () => {
     await expect(TestClient.connect(url, 'https://evil.example')).rejects.toThrow();
     const ok = await TestClient.connect(url, 'https://quoridor.example');
     clients.push(ok);
-    expect((await ok.nextOfType('hello')).protocolVersion).toBe(1);
+    expect((await ok.nextOfType('hello')).protocolVersion).toBe(PROTOCOL_VERSION);
   });
 
   it('serves a health endpoint for prewarming', async () => {
@@ -260,7 +261,9 @@ describe('websocket vertical slice', () => {
     const { app, url } = await startApp(store);
     const response = await fetch(`${url.replace('ws://', 'http://')}/health`);
     expect(response.status).toBe(200);
-    expect((await response.json()).status).toBe('ok');
+    const health = await response.json();
+    expect(health.status).toBe('ok');
+    expect(health.protocolVersion).toBe(PROTOCOL_VERSION);
     expect(app.hub.connectionCount).toBe(0);
   });
 
@@ -468,6 +471,50 @@ describe('watching a room', () => {
     expect(error.code).toBe('room-unavailable');
     expect(error.rid).toBe(9);
   });
+
+  it('keeps a seated client in its room when it tries another attachment', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(store);
+    const host = await connect(url);
+
+    host.send({ type: 'room.create', playerCount: 2, aiLevel: 'easy', fillWithCpu: true, name: 'Host' });
+    const joined = await host.nextOfType('joined');
+    await host.nextOfType('room.state');
+
+    host.send({ type: 'room.create', rid: 8, playerCount: 2, aiLevel: 'easy', fillWithCpu: true, name: 'Other' });
+    expect(await host.nextOfType('error')).toMatchObject({ code: 'invalid-request', rid: 8 });
+
+    host.send({ type: 'room.join', rid: 9, code: joined.code, name: 'Other' });
+    expect(await host.nextOfType('error')).toMatchObject({ code: 'invalid-request', rid: 9 });
+
+    host.send({ type: 'room.watch', rid: 10, code: joined.code });
+    expect(await host.nextOfType('error')).toMatchObject({ code: 'invalid-request', rid: 10 });
+
+    host.send({ type: 'room.start' });
+    const playing = roomOf(
+      await host.next((message) => message.type === 'game.state' && message.room.status === 'playing'),
+    );
+    expect(playing.seats[0]!.connection).toBe('connected');
+  });
+
+  it('lets a socket attach again after its old room was deleted', async () => {
+    const store = new MemoryRoomStore();
+    const { app, url } = await startApp(store);
+    const first = await connect(url);
+    const second = await connect(url);
+
+    first.send({ type: 'room.create', playerCount: 2, aiLevel: 'easy', fillWithCpu: true, name: 'First' });
+    const old = await first.nextOfType('joined');
+    await first.nextOfType('room.state');
+
+    second.send({ type: 'room.create', playerCount: 2, aiLevel: 'easy', fillWithCpu: true, name: 'Second' });
+    const current = await second.nextOfType('joined');
+    await second.nextOfType('room.state');
+
+    await app.manager.destroy(old.roomId);
+    first.send({ type: 'room.watch', code: current.code });
+    expect((await first.nextOfType('watching')).code).toBe(current.code);
+  });
 });
 
 describe('playing again', () => {
@@ -532,6 +579,50 @@ describe('playing again', () => {
   }, 30_000);
 });
 
+describe('finishing order', () => {
+  it('reports the whole placing order when the game ends', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(store);
+
+    const host = await connect(url);
+    host.send({ type: 'room.create', playerCount: 2, aiLevel: 'easy', fillWithCpu: true, name: 'Host' });
+    await host.nextOfType('joined');
+    await host.nextOfType('room.state');
+    host.send({ type: 'room.start' });
+
+    const over = await raceToTheEnd(host);
+    if (over.type !== 'game.over') throw new Error('expected the game to end');
+
+    // Everybody gets a place, and the winner heads the list.
+    expect([...over.placings].sort()).toEqual([0, 1]);
+    expect(over.placings[0]).toBe(over.winner);
+  }, 30_000);
+
+  it('refuses to let a player give up while they still hold walls', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(store);
+
+    const host = await connect(url);
+    host.send({ type: 'room.create', playerCount: 2, aiLevel: 'easy', fillWithCpu: true, name: 'Host' });
+    await host.nextOfType('joined');
+    await host.nextOfType('room.state');
+    host.send({ type: 'room.start' });
+    const state = await myTurn(host);
+    expect(state.game!.players[0]!.wallsLeft).toBeGreaterThan(0);
+
+    host.send({
+      type: 'game.move',
+      rid: 11,
+      expectedGameVersion: state.gameVersion,
+      move: { type: 'resign' },
+    });
+    const error = await host.nextOfType('error');
+    expect(error.code).toBe('illegal-move');
+    expect(error.message).toBe('resign-not-allowed');
+    expect(error.rid).toBe(11);
+  }, 20_000);
+});
+
 async function playOneMove(client: TestClient, state: RoomView): Promise<RoomView> {
   client.send({
     type: 'game.move',
@@ -573,7 +664,7 @@ function goalMove(game: GameState, seat: number): Move {
     const move: Move = { type: 'pawn', to };
     const result = tryApplyMove(game, move);
     if (!result.ok) continue;
-    if (result.state.winner === seat) return move;
+    if (winnerOf(result.state) === seat) return move;
     const distance = distanceToGoal(result.state, seat);
     if (distance >= 0 && distance < bestDistance) {
       bestDistance = distance;
