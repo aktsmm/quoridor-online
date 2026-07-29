@@ -5,22 +5,33 @@ import {
   describeState,
   cellIndex,
   type GameState,
+  type Move,
   type PlayerCount,
 } from '@quoridor/engine';
-import { chooseMove, makeRng, SearchPosition, chooseEasyMove } from '../src/index.js';
+import { chooseGreedyMove, makeRng, SearchPosition } from '../src/index.js';
+
+/**
+ * The greedy engine is no longer wired to a difficulty level - it is the
+ * server's fallback when a worker dies - so it is exercised directly rather
+ * than through `chooseMove`.
+ */
+function greedyMove(state: GameState, rng: () => number): Move {
+  return chooseGreedyMove(SearchPosition.from(state), state.turn, rng);
+}
 
 function playToCompletion(
   seed: number,
   playerCount: PlayerCount,
   maxPlies = 600,
 ): { final: GameState; plies: number } {
+  const rng = makeRng(seed);
   let state = createGame({ playerCount });
   let plies = 0;
 
   while (state.winner === null && plies < maxPlies) {
-    const decision = chooseMove({ state, level: 'easy', seed: seed + plies });
-    const result = tryApplyMove(state, decision.move);
-    expect(result.ok, `AI produced an illegal move: ${JSON.stringify(decision.move)}`).toBe(true);
+    const move = greedyMove(state, rng);
+    const result = tryApplyMove(state, move);
+    expect(result.ok, `AI produced an illegal move: ${JSON.stringify(move)}`).toBe(true);
     if (!result.ok) break;
     state = result.state;
     plies += 1;
@@ -32,7 +43,7 @@ function playToCompletion(
   return { final: state, plies };
 }
 
-describe('easy AI', () => {
+describe('greedy fallback AI', () => {
   it('finishes 2-player games', () => {
     for (let seed = 1; seed <= 20; seed += 1) {
       const { final, plies } = playToCompletion(seed * 1013, 2);
@@ -58,8 +69,7 @@ describe('easy AI', () => {
     // With walls disabled the shortest path is a straight line, so the very
     // first move must be one step forward.
     const state = createGame({ playerCount: 2, wallsPerPlayer: 0 });
-    const decision = chooseMove({ state, level: 'easy', seed: 42 });
-    expect(decision.move).toEqual({ type: 'pawn', to: { c: 4, r: 1 } });
+    expect(greedyMove(state, makeRng(42))).toEqual({ type: 'pawn', to: { c: 4, r: 1 } });
   });
 
   it('takes the winning square when one is available', () => {
@@ -71,17 +81,15 @@ describe('easy AI', () => {
         { ...base.players[1]!, pos: { c: 0, r: 8 } },
       ],
     };
-    const decision = chooseMove({ state, level: 'easy', seed: 7 });
-    expect(decision.move).toEqual({ type: 'pawn', to: { c: 4, r: 8 } });
-    const after = tryApplyMove(state, decision.move);
+    const move = greedyMove(state, makeRng(7));
+    expect(move).toEqual({ type: 'pawn', to: { c: 4, r: 8 } });
+    const after = tryApplyMove(state, move);
     expect(after.ok && after.state.winner).toBe(0);
   });
 
   it('is deterministic for a given seed', () => {
     const state = createGame({ playerCount: 2 });
-    const a = chooseMove({ state, level: 'easy', seed: 12345 });
-    const b = chooseMove({ state, level: 'easy', seed: 12345 });
-    expect(a.move).toEqual(b.move);
+    expect(greedyMove(state, makeRng(12345))).toEqual(greedyMove(state, makeRng(12345)));
   });
 
   it('only ever suggests legal moves in crowded positions', () => {
@@ -89,8 +97,7 @@ describe('easy AI', () => {
     let state = createGame({ playerCount: 4 });
 
     for (let ply = 0; ply < 200 && state.winner === null; ply += 1) {
-      const position = SearchPosition.from(state);
-      const move = chooseEasyMove(position, state.turn, rng);
+      const move = greedyMove(state, rng);
       const result = tryApplyMove(state, move);
       expect(result.ok, `${JSON.stringify(move)} in ${describeState(state)}`).toBe(true);
       if (!result.ok) break;
@@ -101,7 +108,7 @@ describe('easy AI', () => {
   it('falls back to a pawn move when out of walls', () => {
     const state = createGame({ playerCount: 2, wallsPerPlayer: 0 });
     for (let seed = 0; seed < 50; seed += 1) {
-      expect(chooseMove({ state, level: 'easy', seed }).move.type).toBe('pawn');
+      expect(greedyMove(state, makeRng(seed)).type).toBe('pawn');
     }
   });
 });

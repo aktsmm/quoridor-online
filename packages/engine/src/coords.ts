@@ -1,4 +1,11 @@
-import { BOARD_SIZE, WALL_GRID, type Pos, type Wall } from './types.js';
+import {
+  BOARD_SIZE,
+  WALL_GRID,
+  type Orientation,
+  type Pos,
+  type SeatDirection,
+  type Wall,
+} from './types.js';
 
 export function inBoard(c: number, r: number): boolean {
   return c >= 0 && c < BOARD_SIZE && r >= 0 && r < BOARD_SIZE;
@@ -54,6 +61,76 @@ export const PERPENDICULAR: readonly (readonly [number, number])[] = [
   [EAST, WEST], // south
   [NORTH, SOUTH], // west
 ];
+
+/**
+ * Board rotation, used purely for presentation so every player can look at
+ * their own home row from the bottom of the screen. Game state, notation and
+ * the wire protocol always stay in absolute coordinates; only the renderer and
+ * the pointer hit-testing move into "view space".
+ *
+ * One quarter turn maps `(c, r)` to `(n - r, c)`, which is a rotation (the
+ * determinant is 1), so applying it four times is the identity and applying it
+ * `4 - k` times undoes `k`.
+ */
+export type QuarterTurns = 0 | 1 | 2 | 3;
+
+export function normalizeQuarterTurns(k: number): QuarterTurns {
+  if (!Number.isFinite(k)) return 0;
+  return ((((Math.trunc(k) % 4) + 4) % 4) as QuarterTurns);
+}
+
+/** The rotation that undoes `k`. */
+export function inverseQuarterTurns(k: number): QuarterTurns {
+  return normalizeQuarterTurns(4 - normalizeQuarterTurns(k));
+}
+
+/** How far the board must turn so this seat's home row sits at the bottom. */
+export function seatQuarterTurns(seat: SeatDirection): QuarterTurns {
+  switch (seat) {
+    case 'west':
+      return 1;
+    case 'north':
+      return 2;
+    case 'east':
+      return 3;
+    default:
+      return 0;
+  }
+}
+
+export function rotatePos(pos: Pos, k: number): Pos {
+  const n = BOARD_SIZE - 1;
+  switch (normalizeQuarterTurns(k)) {
+    case 1:
+      return { c: n - pos.r, r: pos.c };
+    case 2:
+      return { c: n - pos.c, r: n - pos.r };
+    case 3:
+      return { c: pos.r, r: n - pos.c };
+    default:
+      return { c: pos.c, r: pos.r };
+  }
+}
+
+/**
+ * Wall anchors live on the 8x8 grid of interior intersections, so they use the
+ * same formula with `WALL_GRID - 1`. An odd number of quarter turns swaps the
+ * orientation: `h(c,r)` becomes `v(7-r, c)` and `v(c,r)` becomes `h(7-r, c)`.
+ */
+export function rotateWall(wall: Wall, k: number): Wall {
+  const m = WALL_GRID - 1;
+  const flipped: Orientation = wall.o === 'h' ? 'v' : 'h';
+  switch (normalizeQuarterTurns(k)) {
+    case 1:
+      return { c: m - wall.r, r: wall.c, o: flipped };
+    case 2:
+      return { c: m - wall.c, r: m - wall.r, o: wall.o };
+    case 3:
+      return { c: wall.r, r: m - wall.c, o: flipped };
+    default:
+      return { c: wall.c, r: wall.r, o: wall.o };
+  }
+}
 
 const FILES = 'abcdefghi';
 

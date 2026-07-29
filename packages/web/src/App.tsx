@@ -38,6 +38,10 @@ function Shell(): React.JSX.Element {
       store.joinRoom(intent.code, intent.name);
       return;
     }
+    if (intent.kind === 'watch') {
+      store.watchRoom(intent.code);
+      return;
+    }
     store.createRoom({
       playerCount: intent.playerCount,
       aiLevel: intent.aiLevel,
@@ -86,6 +90,7 @@ function Shell(): React.JSX.Element {
           <Lobby
             room={room}
             youIndex={session.seatIndex}
+            spectating={session.role === 'spectator'}
             busy={session.busy}
             onStart={() => store.startGame()}
             onLeave={() => store.leaveRoom()}
@@ -96,10 +101,11 @@ function Shell(): React.JSX.Element {
           <Game
             room={room}
             youIndex={session.seatIndex}
+            spectating={session.role === 'spectator'}
             frozen={session.optimistic}
             onMove={(move, next) => store.makeMove(move, next)}
             onLeave={() => store.leaveRoom()}
-            onHome={() => store.goHome()}
+            onRematch={() => store.rematch()}
           />
         )}
       </main>

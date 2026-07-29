@@ -35,7 +35,7 @@ export function defaultSeats(playerCount: PlayerCount): SeatDirection[] {
     case 2:
       return ['south', 'north'];
     case 3:
-      // Three-player Quoridor is unofficial; the north seat is left empty by
+      // Three-player is a house rule; the north seat is left empty by
       // default and the caller may rotate which side that is.
       return seatsExcluding('north');
     case 4:

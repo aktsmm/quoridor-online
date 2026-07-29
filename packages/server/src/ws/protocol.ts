@@ -7,8 +7,10 @@ import type { RoomRecord, RoomStatus, SeatConnection } from '../rooms/record.js'
 export type ClientMessage =
   | { type: 'room.create'; rid?: number; playerCount: PlayerCount; aiLevel: AiLevel; fillWithCpu: boolean; name: string }
   | { type: 'room.join'; rid?: number; code: string; name: string }
+  | { type: 'room.watch'; rid?: number; code: string }
   | { type: 'room.reconnect'; rid?: number; code: string; playerToken: string; lastGameVersion?: number }
   | { type: 'room.start'; rid?: number }
+  | { type: 'room.rematch'; rid?: number }
   | { type: 'room.leave'; rid?: number }
   | { type: 'game.move'; rid?: number; expectedGameVersion: number; move: Move }
   | { type: 'ping'; rid?: number };
@@ -17,6 +19,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { type: 'hello'; protocolVersion: number; serverTime: number }
   | { type: 'joined'; rid?: number; roomId: string; code: string; seatIndex: number; playerToken: string }
+  | { type: 'watching'; rid?: number; roomId: string; code: string }
   | { type: 'room.state'; rid?: number; room: RoomView }
   | { type: 'game.state'; rid?: number; room: RoomView }
   | { type: 'game.over'; room: RoomView; winner: number }
@@ -38,6 +41,8 @@ export interface RoomView {
   seats: SeatView[];
   game: GameState | null;
   moveLog: string[];
+  /** How many seat-less watchers are currently attached. */
+  spectators: number;
 }
 
 export interface SeatView {
@@ -51,8 +56,11 @@ export interface SeatView {
 /**
  * Strips `tokenHash` and anything else the client has no business seeing.
  * Every outbound room payload goes through here - there is no other path.
+ *
+ * `spectators` is a live connection count rather than stored state, so the hub
+ * supplies it at broadcast time.
  */
-export function toRoomView(record: RoomRecord): RoomView {
+export function toRoomView(record: RoomRecord, spectators = 0): RoomView {
   return {
     roomId: record.roomId,
     code: record.code,
@@ -71,5 +79,6 @@ export function toRoomView(record: RoomRecord): RoomView {
     })),
     game: record.game,
     moveLog: record.moveLog,
+    spectators,
   };
 }

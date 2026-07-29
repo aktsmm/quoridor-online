@@ -180,7 +180,9 @@ export class RoomManager {
 
     const token = newPlayerToken();
     const outcome = await this.#mutate(roomId, (record, ctx) => {
-      if (record.status !== 'lobby') throw new RoomError('room-unavailable');
+      // A finished room is between games, so it takes newcomers just like a
+      // fresh lobby does - that is what keeps a table together for a rematch.
+      if (record.status === 'playing') throw new RoomError('room-unavailable');
       const seat = record.seats.find((s) => s.connection === 'empty' && s.tokenHash === null);
       if (!seat) throw new RoomError('room-unavailable');
       seat.name = name;
@@ -233,13 +235,15 @@ export class RoomManager {
     const outcome = await this.#mutate(roomId, (record, ctx) => {
       const seat = record.seats[seatIndex];
       if (!seat) return false;
-      if (record.status === 'lobby') {
+      // Between games the seat is free again; mid-game it has to keep playing,
+      // so the CPU takes over instead of the position losing a player.
+      if (record.status === 'playing') {
+        seat.connection = 'cpu-controlled';
+      } else {
         seat.name = '';
         seat.kind = 'human';
         seat.connection = 'empty';
         seat.tokenHash = null;
-      } else {
-        seat.connection = 'cpu-controlled';
       }
       seat.disconnectedAt = null;
       ctx.touch();
@@ -252,29 +256,48 @@ export class RoomManager {
     const outcome = await this.#mutate(roomId, (record, ctx) => {
       if (record.hostSeat !== seatIndex) throw new RoomError('not-host');
       if (record.status !== 'lobby') throw new RoomError('already-started');
-
-      if (record.fillWithCpu) {
-        for (const seat of record.seats) {
-          if (seat.connection !== 'empty') continue;
-          seat.kind = 'cpu';
-          seat.connection = 'cpu-controlled';
-          seat.name = `CPU ${seat.index + 1}`;
-        }
-      }
-      if (record.seats.some((s) => s.connection === 'empty')) throw new RoomError('not-ready');
-
-      record.game = createGame({
-        playerCount: record.playerCount,
-        seats: record.seats.map((s) => s.seat),
-        firstTurn: Math.floor(this.#random() * record.playerCount),
-      });
-      record.status = 'playing';
-      record.moveLog = [];
+      this.#beginGame(record);
       ctx.touch();
       return true;
     });
     if (!outcome) throw new RoomError('room-unavailable');
     return outcome.stored;
+  }
+
+  /**
+   * Starts the next game without breaking up the table. Seats, names and
+   * tokens all survive; only the position and the first mover are new.
+   */
+  async rematch(roomId: string, seatIndex: number): Promise<StoredRoom> {
+    const outcome = await this.#mutate(roomId, (record, ctx) => {
+      if (record.hostSeat !== seatIndex) throw new RoomError('not-host');
+      if (record.status !== 'finished') throw new RoomError('invalid-request');
+      this.#beginGame(record);
+      ctx.touch();
+      return true;
+    });
+    if (!outcome) throw new RoomError('room-unavailable');
+    return outcome.stored;
+  }
+
+  #beginGame(record: RoomRecord): void {
+    if (record.fillWithCpu) {
+      for (const seat of record.seats) {
+        if (seat.connection !== 'empty') continue;
+        seat.kind = 'cpu';
+        seat.connection = 'cpu-controlled';
+        seat.name = `CPU ${seat.index + 1}`;
+      }
+    }
+    if (record.seats.some((s) => s.connection === 'empty')) throw new RoomError('not-ready');
+
+    record.game = createGame({
+      playerCount: record.playerCount,
+      seats: record.seats.map((s) => s.seat),
+      firstTurn: Math.floor(this.#random() * record.playerCount),
+    });
+    record.status = 'playing';
+    record.moveLog = [];
   }
 
   /**

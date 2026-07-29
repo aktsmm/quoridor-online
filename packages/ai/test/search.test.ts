@@ -13,9 +13,9 @@ import {
 import {
   PathTracer,
   SearchPosition,
-  chooseHardMove,
   chooseMove,
-  chooseNormalMove,
+  chooseSearchMove,
+  chooseStaticMove,
   evaluate,
   makeRng,
   pathWallCandidates,
@@ -226,18 +226,18 @@ describe('search position hashing', () => {
   });
 });
 
-describe('normal AI', () => {
+describe('easy AI (one ply)', () => {
   it('finishes games at every player count', () => {
     for (const playerCount of [2, 3, 4] as PlayerCount[]) {
-      const { final, plies } = playToCompletion('normal', playerCount * 7919, playerCount);
+      const { final, plies } = playToCompletion('easy', playerCount * 7919, playerCount);
       expect(final.winner, `stalled after ${plies} plies: ${describeState(final)}`).not.toBeNull();
     }
   });
 
   it('is deterministic for a given seed', () => {
     const state = createGame({ playerCount: 2 });
-    const a = chooseMove({ state, level: 'normal', seed: 4242 });
-    const b = chooseMove({ state, level: 'normal', seed: 4242 });
+    const a = chooseMove({ state, level: 'easy', seed: 4242 });
+    const b = chooseMove({ state, level: 'easy', seed: 4242 });
     expect(a.move).toEqual(b.move);
   });
 
@@ -250,7 +250,7 @@ describe('normal AI', () => {
         { ...base.players[1]!, pos: { c: 0, r: 8 } },
       ],
     };
-    const decision = chooseMove({ state, level: 'normal', seed: 5 });
+    const decision = chooseMove({ state, level: 'easy', seed: 5 });
     expect(decision.move).toEqual({ type: 'pawn', to: { c: 4, r: 8 } });
   });
 
@@ -266,7 +266,7 @@ describe('normal AI', () => {
         { ...base.players[1]!, pos: { c: 0, r: 1 } },
       ],
     };
-    const decision = chooseMove({ state, level: 'normal', seed: 11 });
+    const decision = chooseMove({ state, level: 'easy', seed: 11 });
     expect(decision.move.type).toBe('wall');
 
     const after = tryApplyMove(state, decision.move);
@@ -277,10 +277,10 @@ describe('normal AI', () => {
   });
 
   it('races rather than trading a tempo for a one-square block', () => {
-    // Specified behaviour, not an oversight: `normal` is a single ply of
+    // Specified behaviour, not an oversight: `easy` is a single ply of
     // `min(opponent distance) - my distance`, in which a wall worth one square
-    // exactly cancels the move it costs. Only `hard` sees that racing here
-    // loses on the spot - that difference is most of the gap between them.
+    // exactly cancels the move it costs. Only a search sees that racing here
+    // loses on the spot - that difference is most of the gap between the levels.
     const base = createGame({ playerCount: 2 });
     const state: GameState = {
       ...base,
@@ -289,7 +289,7 @@ describe('normal AI', () => {
         { ...base.players[1]!, pos: { c: 4, r: 1 } },
       ],
     };
-    expect(chooseMove({ state, level: 'normal', seed: 11 }).move.type).toBe('pawn');
+    expect(chooseMove({ state, level: 'easy', seed: 11 }).move.type).toBe('pawn');
     expect(chooseMove({ state, level: 'hard', seed: 11, timeBudgetMs: 300 }).move.type).toBe('wall');
   }, 30_000);
 
@@ -299,7 +299,7 @@ describe('normal AI', () => {
     // it cannot lengthen anything. Out of walls, the choice is forced.
     const state = createGame({ playerCount: 2, wallsPerPlayer: 0 });
     for (let seed = 0; seed < 20; seed += 1) {
-      expect(chooseMove({ state, level: 'normal', seed }).move.type).toBe('pawn');
+      expect(chooseMove({ state, level: 'easy', seed }).move.type).toBe('pawn');
     }
   });
 });
@@ -315,7 +315,7 @@ describe('hard AI', () => {
   it('is deterministic for a given seed at a fixed depth', () => {
     const state = createGame({ playerCount: 2 });
     const run = () =>
-      chooseHardMove(SearchPosition.from(state), 0, {
+      chooseSearchMove(SearchPosition.from(state), 0, {
         timeBudgetMs: 60_000,
         now: () => performance.now(),
         rng: makeRng(999),
@@ -380,20 +380,21 @@ describe('hard AI', () => {
     expect(SearchPosition.from(after.state).distance(1)).toBeGreaterThan(1);
   }, 30_000);
 
-  it('is at least as good as normal at depth one', () => {
-    // Hard sweeps every legal wall at the root and orders by the same static
-    // score normal maximises, so its first iteration can never be worse.
+  it('is at least as good as the one-ply engine at depth one', () => {
+    // The search sweeps every legal wall at the root and orders by the same
+    // static score the one-ply engine maximises, so its first iteration can
+    // never be worse.
     for (let seed = 1; seed <= 5; seed += 1) {
       const state = createGame({ playerCount: 2 });
       const position = SearchPosition.from(state);
-      const hard = chooseHardMove(position, 0, {
+      const searched = chooseSearchMove(position, 0, {
         timeBudgetMs: 10_000,
         now: () => performance.now(),
         rng: makeRng(seed),
         maxDepth: 1,
       });
-      const normal = chooseNormalMove(SearchPosition.from(state), 0, makeRng(seed));
-      expect(scoreMove(position, 0, hard.move)).toBe(scoreMove(position, 0, normal));
+      const onePly = chooseStaticMove(SearchPosition.from(state), 0, makeRng(seed));
+      expect(scoreMove(position, 0, searched.move)).toBe(scoreMove(position, 0, onePly));
     }
   }, 30_000);
 
@@ -409,7 +410,7 @@ describe('hard AI', () => {
 
     for (let ply = 0; ply < 60 && state.winner === null; ply += 1) {
       const position = SearchPosition.from(state);
-      const { move } = chooseHardMove(position, state.turn, {
+      const { move } = chooseSearchMove(position, state.turn, {
         timeBudgetMs: 20,
         now: () => performance.now(),
         rng,

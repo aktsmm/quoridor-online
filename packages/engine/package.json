@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Pure TypeScript Quoridor rules engine, shared by client and server",
+  "description": "Pure TypeScript rules engine for the wall-blocking race game, shared by client and server",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

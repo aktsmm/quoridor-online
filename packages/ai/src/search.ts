@@ -1,6 +1,6 @@
 import type { Move } from '@quoridor/engine';
 import { WIN_SCORE, evaluate } from './evaluate.js';
-import { generateMoves, opponentsOf, scoreMove } from './normal.js';
+import { generateMoves, opponentsOf, scoreMove } from './static.js';
 import { PathTracer } from './paths.js';
 import type { SearchPosition} from './position.js';
 import { pawnMove } from './position.js';
@@ -28,7 +28,7 @@ interface Entry {
   move: Move | null;
 }
 
-export interface HardOptions {
+export interface SearchOptions {
   readonly timeBudgetMs: number;
   readonly now: () => number;
   readonly rng: () => number;
@@ -37,7 +37,7 @@ export interface HardOptions {
   readonly maxDepth?: number;
 }
 
-export interface HardResult {
+export interface SearchResult {
   readonly move: Move;
   readonly depth: number;
   readonly score: number;
@@ -45,23 +45,27 @@ export interface HardResult {
 }
 
 /**
- * Strong opponent: iterative deepening alpha-beta under a wall-clock budget.
+ * Iterative deepening alpha-beta under a wall-clock budget.
  *
  * The contract is time, not depth. Each iteration either finishes - in which
  * case its move replaces the previous answer - or is abandoned mid-way, in
  * which case the last completed depth still holds a fully searched move. That
- * is what makes it safe to hand the search a 500 ms budget on a small
+ * is what makes it safe to hand the search a one second budget on a small
  * container and still get a sane answer.
+ *
+ * `maxDepth` is what separates the two levels that use this engine: capping the
+ * depth keeps the middle level honest on a fast machine, where a time-only
+ * limit would quietly make it as strong as the top level.
  *
  * Multi-player games are searched paranoid: every opponent is assumed to be
  * cooperating against `me`, which keeps the value one-dimensional and avoids
  * the discontinuities a max-n search would produce.
  */
-export function chooseHardMove(
+export function chooseSearchMove(
   position: SearchPosition,
   me: number,
-  options: HardOptions,
-): HardResult {
+  options: SearchOptions,
+): SearchResult {
   const deadline = options.now() + options.timeBudgetMs;
   const tracer = new PathTracer();
   const victims = opponentsOf(position, me);
@@ -98,7 +102,8 @@ export function chooseHardMove(
     shortlist.push(entry.move);
   }
 
-  // Depth 0 answer: the best static move, i.e. exactly what `normal` would do.
+  // Depth 0 answer: the best static move, i.e. exactly what the one-ply engine
+  // would do. Even a search that runs out of time immediately returns that.
   const topScore = scored[0]!.score;
   const topTies = scored.filter((entry) => entry.score === topScore);
   let best = topTies[randomInt(options.rng, topTies.length)]!.move;

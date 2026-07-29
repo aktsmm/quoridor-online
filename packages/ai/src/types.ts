@@ -35,4 +35,8 @@ export interface AiDecision {
   elapsedMs: number;
 }
 
-export const DEFAULT_TIME_BUDGET_MS = 500;
+/**
+ * How long the strongest level may think, in milliseconds. The search deepens
+ * iteratively, so a bigger budget simply buys another ply when there is time.
+ */
+export const DEFAULT_TIME_BUDGET_MS = 1000;

@@ -33,6 +33,8 @@ export interface Limits {
   readonly maxPayloadBytes: number;
   readonly maxNameLength: number;
   readonly maxPendingPerSocket: number;
+  /** Seat-less watchers allowed per room, counted separately from players. */
+  readonly maxSpectatorsPerRoom: number;
   /** Token bucket sizes, expressed as "N actions per window". */
   readonly createRoom: RateSpec;
   readonly joinFailure: RateSpec;
@@ -71,6 +73,7 @@ export const DEFAULT_LIMITS: Limits = {
   maxPayloadBytes: 8 * 1024,
   maxNameLength: 24,
   maxPendingPerSocket: 16,
+  maxSpectatorsPerRoom: 10,
   createRoom: { limit: 10, windowMs: 60_000 },
   joinFailure: { limit: 20, windowMs: 60_000 },
   move: { limit: 90, windowMs: 60_000 },
@@ -97,7 +100,7 @@ export function loadConfig(): ServerConfig {
     abandonedRoomTtlMs: envInt('ABANDONED_ROOM_TTL_MS', 10 * 60_000),
     roomTtlMs: envInt('ROOM_TTL_MS', 6 * 60 * 60_000),
     limits: DEFAULT_LIMITS,
-    aiTimeBudgetMs: envInt('AI_TIME_BUDGET_MS', 500),
+    aiTimeBudgetMs: envInt('AI_TIME_BUDGET_MS', 1000),
     aiMinThinkMs: envInt('AI_MIN_THINK_MS', 350),
   };
 }

@@ -45,6 +45,8 @@ export interface RoomView {
   seats: SeatView[];
   game: GameState | null;
   moveLog: string[];
+  /** How many seat-less watchers are currently attached. */
+  spectators: number;
 }
 
 export type ClientMessage =
@@ -57,8 +59,10 @@ export type ClientMessage =
       name: string;
     }
   | { type: 'room.join'; rid?: number; code: string; name: string }
+  | { type: 'room.watch'; rid?: number; code: string }
   | { type: 'room.reconnect'; rid?: number; code: string; playerToken: string; lastGameVersion?: number }
   | { type: 'room.start'; rid?: number }
+  | { type: 'room.rematch'; rid?: number }
   | { type: 'room.leave'; rid?: number }
   | { type: 'game.move'; rid?: number; expectedGameVersion: number; move: Move }
   | { type: 'ping'; rid?: number };
@@ -66,6 +70,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { type: 'hello'; protocolVersion: number; serverTime: number }
   | { type: 'joined'; rid?: number; roomId: string; code: string; seatIndex: number; playerToken: string }
+  | { type: 'watching'; rid?: number; roomId: string; code: string }
   | { type: 'room.state'; rid?: number; room: RoomView }
   | { type: 'game.state'; rid?: number; room: RoomView }
   | { type: 'game.over'; room: RoomView; winner: number }

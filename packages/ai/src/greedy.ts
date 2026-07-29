@@ -2,17 +2,18 @@ import { isGoalCell, type Move } from '@quoridor/engine';
 import { SearchPosition, pawnMove } from './position.js';
 import { pickRandom, randomInt } from './rng.js';
 
-/** How often the easy AI wastes a turn on an arbitrary wall. */
+/** How often the greedy AI wastes a turn on an arbitrary wall. */
 const RANDOM_WALL_CHANCE = 0.12;
 
 /**
- * Beginner opponent: walk the shortest path to the goal, and occasionally drop
- * a wall somewhere legal without thinking about it.
+ * The simplest engine there is: walk the shortest path to the goal, and
+ * occasionally drop a wall somewhere legal without thinking about it.
  *
- * It never plays an illegal move and it always makes progress, so a game
- * against it always ends - it just has no idea what the opponent is doing.
+ * No level uses this on its own any more - it was too weak to be a fair
+ * opponent - but it never plays an illegal move and always makes progress, so
+ * it is exactly what the server wants when a worker dies mid-turn.
  */
-export function chooseEasyMove(position: SearchPosition, me: number, rng: () => number): Move {
+export function chooseGreedyMove(position: SearchPosition, me: number, rng: () => number): Move {
   if (position.wallsLeft[me]! > 0 && rng() < RANDOM_WALL_CHANCE) {
     const walls = position.legalWalls(me);
     if (walls.length > 0) return { type: 'wall', wall: pickRandom(rng, walls) };

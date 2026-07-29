@@ -77,6 +77,12 @@ const schemas: Record<ClientMessage['type'], object> = {
     required: ['type', 'code', 'name'],
     properties: { type: { const: 'room.join' }, rid, code, name },
   },
+  'room.watch': {
+    type: 'object',
+    additionalProperties: false,
+    required: ['type', 'code'],
+    properties: { type: { const: 'room.watch' }, rid, code },
+  },
   'room.reconnect': {
     type: 'object',
     additionalProperties: false,
@@ -94,6 +100,12 @@ const schemas: Record<ClientMessage['type'], object> = {
     additionalProperties: false,
     required: ['type'],
     properties: { type: { const: 'room.start' }, rid },
+  },
+  'room.rematch': {
+    type: 'object',
+    additionalProperties: false,
+    required: ['type'],
+    properties: { type: { const: 'room.rematch' }, rid },
   },
   'room.leave': {
     type: 'object',

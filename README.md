@@ -1,11 +1,17 @@
-# Quoridor Online
+# こりこり (Korikori - Wall Race)
 
-Apple 風デザインのコリドール（Quoridor）オンライン対戦 Web アプリ。
+Apple 風デザインの「壁でふさぐ陣取りレース」オンライン対戦 Web アプリ。
+
+> コリドール（Gigamic 社）に着想を得た非公式の対戦ゲームです。Gigamic 社とは関係ありません。
+> ルール以外の画像・文章・コードはすべて自作です。
 
 **▶ <https://zealous-rock-0e6198c00.7.azurestaticapps.net/>**
 
 - CPU 対戦（弱 / 普通 / 強）
 - オンライン 2〜4 人対戦（6 桁ルームコードのみ、ID / パスワード不要）
+- モード切替なしの盤面操作（マスをタップで移動、溝をなぞって壁）
+- どの席でも自分が手前に来る視点
+- 途中からの観戦（1 ルームにつき 10 人まで）／終局後もルームに残って連戦
 - 日英 i18n
 - Azure Container Apps + Static Web Apps でホスティング
 
@@ -14,9 +20,12 @@ Apple 風デザインのコリドール（Quoridor）オンライン対戦 Web �
 | パッケージ | 役割 |
 |---|---|
 | `packages/engine` | ルールエンジン（盤面・壁・移動・ジャンプ・経路保証・勝利判定） |
-| `packages/ai` | CPU（弱 = BFS 最短経路、普通 = 1 手読み、強 = 反復深化 α-β） |
+| `packages/ai` | CPU（弱 = 1 手読み、普通 = 浅い反復深化 α-β、強 = 反復深化 α-β 全力） |
 | `packages/server` | Fastify + ws。ルーム管理、再接続、Azure Table Storage スナップショット |
 | `packages/web` | React 19 + Vite のフロントエンド |
+
+`packages/ai` はレベル名とエンジン名を分けている。BFS で最短経路を歩くだけの `greedy` は
+どのレベルにも割り当てず、AI ワーカーが落ちたときのサーバー側フォールバックに使う。
 
 ## 開発
 
@@ -43,7 +52,8 @@ ghcr.io（public）に置く。
 | `deploy-server.yml` | `main`（engine / ai / server / Dockerfile） | イメージを ghcr.io に push → 対局中でないことを確認 → `az containerapp update` |
 | `deploy-web.yml` | `main`（web / engine） | Container App の FQDN を解決 → Vite build → Static Web Apps に upload |
 
-インフラは Bicep で、変更時のみ手動適用する。
+インフラは Bicep で、変更時のみ手動適用する。リポジトリ名と Azure リソース名は
+`quoridor` のまま（作り直しのコストに見合わないため、変更したのは表示名だけ）。
 
 ```bash
 # 一度だけ: デプロイ用マネージド ID とフェデレーション資格情報

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
-  "description": "Online Quoridor - play in the browser against friends or CPU",
+  "description": "Korikori - an online wall-blocking race game you play in the browser against friends or CPU",
   "license": "MIT",
   "workspaces": [
     "packages/*"

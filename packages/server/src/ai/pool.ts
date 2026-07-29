@@ -2,7 +2,14 @@ import { Worker } from 'node:worker_threads';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { legalMoves, type GameState, type Move } from '@quoridor/engine';
-import { chooseMove, type AiDecision, type AiLevel } from '@quoridor/ai';
+import {
+  SearchPosition,
+  chooseGreedyMove,
+  chooseMove,
+  makeRng,
+  type AiDecision,
+  type AiLevel,
+} from '@quoridor/ai';
 import type { WorkerRequest, WorkerResponse } from '@quoridor/ai/worker';
 
 export interface AiRequest {
@@ -121,8 +128,23 @@ export class InlineAiPool implements AiPool {
 /**
  * Last-resort move so a CPU seat can never stall the game, even if the worker
  * crashed or returned something unusable.
+ *
+ * The greedy engine costs one breadth-first sweep and always walks towards its
+ * goal, so a worker failure looks like a weak move rather than a nonsense one.
+ * The very first legal move is kept as the final backstop.
  */
 export function fallbackMove(state: GameState, playerIndex: number): Move | null {
+  if (state.winner === null) {
+    try {
+      return chooseGreedyMove(
+        SearchPosition.from(state),
+        playerIndex,
+        makeRng(Math.floor(Math.random() * 0xffffffff)),
+      );
+    } catch {
+      // Fall through to the dumb answer below.
+    }
+  }
   const moves = legalMoves(state, playerIndex);
   return moves[0] ?? null;
 }

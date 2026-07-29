@@ -2,7 +2,7 @@ import type { Dictionary } from './en.js';
 
 /** Japanese messages. Typed against `en` so a missing key fails the build. */
 export const ja: Dictionary = {
-  appName: 'コリドール',
+  appName: 'こりこり',
   tagline: '向こう岸を目指せ。壁で相手を足止めしろ。',
 
   connOffline: '未接続',
@@ -21,6 +21,8 @@ export const ja: Dictionary = {
   homeJoin: 'ルームに参加',
   homeJoinHint: '友達の 6 桁コードを入力',
   homeHowTo: '遊び方',
+  homeWatch: '観戦する',
+  homeWatchHint: '6 桁のコードだけで見られます',
   homeBack: '戻る',
 
   setupTitle: '新しい対局',
@@ -47,6 +49,10 @@ export const ja: Dictionary = {
   joinCode: 'ルームコード',
   joinCodeHint: '6 桁の数字',
   joinAction: '参加する',
+
+  watchTitle: '対局を観戦',
+  watchAction: '観戦する',
+  watchWaiting: '対局の開始を待っています…',
 
   lobbyTitle: '待機ルーム',
   lobbyCode: 'ルームコード',
@@ -84,6 +90,18 @@ export const ja: Dictionary = {
   gameDisconnected: '切断中',
   gameSpectating: '観戦中',
   gameUndoUnavailable: 'オンライン対局では待ったはできません。',
+  gameSmartHint: 'マスをタップで移動。溝を押してなぞると壁。',
+  gameSmartHintTouch: '盤の外へ指を滑らせると取り消せます。',
+  gameConfirmPawn: '{square} へ移動',
+  gameConfirmWall: '{wall} に壁',
+  gameConfirmCancel: '離すとキャンセル',
+  gameFlipView: '視点を回す',
+  gameSpectatorCount: '観戦 {count} 人',
+  gameStopWatching: '観戦をやめる',
+  gamePlayAgain: 'もう一局',
+  gameRematchWait: 'ホストが次の対局を始めるのを待っています…',
+  gameCloseResult: '盤面を見る',
+  gameLeaveRoom: 'ルームを出る',
 
   seatSouth: '南',
   seatWest: '西',
@@ -96,6 +114,12 @@ export const ja: Dictionary = {
   settingsSound: '効果音',
   settingsSoundOn: 'オン',
   settingsSoundOff: 'オフ',
+  settingsHaptics: '振動',
+  settingsControls: '盤面の操作',
+  settingsControlsSmart: 'スマート',
+  settingsControlsClassic: '従来',
+  settingsControlsHint:
+    'スマートは触れた位置から移動か壁かを判定します。従来は移動 / 壁の切替と向きボタンを使います。',
   settingsClose: '完了',
 
   rulesTitle: '遊び方',

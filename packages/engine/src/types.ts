@@ -1,4 +1,4 @@
-/** Squares per side. Quoridor is always 9x9. */
+/** Squares per side. The board is always 9x9. */
 export const BOARD_SIZE = 9;
 
 /** Wall anchors form an 8x8 grid of interior intersections. */

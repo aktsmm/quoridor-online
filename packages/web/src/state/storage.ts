@@ -1,7 +1,10 @@
 export interface Credentials {
   roomId: string;
   code: string;
+  /** Empty for watchers - they hold no seat, so there is nothing to prove. */
   playerToken: string;
+  /** Resume as a spectator (`room.watch`) instead of reclaiming a seat. */
+  spectator?: boolean;
 }
 
 const KEY = 'quoridor.session';

@@ -297,6 +297,106 @@ describe('moves', () => {
   });
 });
 
+describe('rematch', () => {
+  /** Races both pawns straight at their goal rows until someone arrives. */
+  async function finishedRoom() {
+    const { manager } = makeManager();
+    const host = await manager.createRoom({
+      playerCount: 2,
+      aiLevel: 'easy',
+      fillWithCpu: false,
+      name: 'Host',
+    });
+    const roomId = host.stored.record.roomId;
+    const code = host.stored.record.code;
+    await manager.joinRoom(code, 'Guest');
+    let stored = await manager.start(roomId, 0);
+
+    for (let ply = 0; ply < 60 && stored.record.status === 'playing'; ply += 1) {
+      const game = stored.record.game!;
+      const seat = game.turn;
+      const goalRow = seat === 0 ? 8 : 0;
+      const to = [...legalPawnMoves(game)].sort(
+        (a, b) => Math.abs(a.r - goalRow) - Math.abs(b.r - goalRow),
+      )[0]!;
+      stored = await manager.applyMove(roomId, seat, stored.record.gameVersion, {
+        type: 'pawn',
+        to,
+      });
+    }
+
+    expect(stored.record.status).toBe('finished');
+    return { manager, roomId, code, stored };
+  }
+
+  it('starts the next game without breaking up the table', async () => {
+    const { manager, roomId, stored } = await finishedRoom();
+    const before = stored.record;
+    const names = before.seats.map((s) => s.name);
+    const hashes = before.seats.map((s) => s.tokenHash);
+
+    const next = await manager.rematch(roomId, 0);
+    expect(next.record.status).toBe('playing');
+    expect(next.record.moveLog).toEqual([]);
+    expect(next.record.game!.ply).toBe(0);
+    expect(next.record.game!.winner).toBeNull();
+    expect(next.record.gameVersion).toBeGreaterThan(before.gameVersion);
+
+    // The whole point: same code, same seats, same tokens, so nobody has to
+    // rejoin between games.
+    expect(next.record.code).toBe(before.code);
+    expect(next.record.seats.map((s) => s.name)).toEqual(names);
+    expect(next.record.seats.map((s) => s.tokenHash)).toEqual(hashes);
+    expect(next.record.seats.map((s) => s.seat)).toEqual(before.seats.map((s) => s.seat));
+  });
+
+  it('only lets the host call it, and only between games', async () => {
+    const { manager, roomId } = await finishedRoom();
+
+    await expect(manager.rematch(roomId, 1)).rejects.toMatchObject({ code: 'not-host' });
+
+    await manager.rematch(roomId, 0);
+    // A second one mid-game would silently wipe the position out from under
+    // everybody, so it has to be refused.
+    await expect(manager.rematch(roomId, 0)).rejects.toMatchObject({ code: 'invalid-request' });
+  });
+
+  it('frees a seat that leaves after the game, so someone else can take it', async () => {
+    const { manager, roomId, code, stored } = await finishedRoom();
+
+    await manager.leave(roomId, 1);
+    const afterLeave = await manager.get(roomId);
+    expect(afterLeave!.record.seats[1]!.connection).toBe('empty');
+    expect(afterLeave!.record.seats[1]!.tokenHash).toBeNull();
+
+    const newcomer = await manager.joinRoom(code, 'Newcomer');
+    expect(newcomer.seatIndex).toBe(1);
+    expect(newcomer.stored.record.seats[1]!.name).toBe('Newcomer');
+    // The host seat is untouched, so the host still owns the rematch button.
+    expect(newcomer.stored.record.hostSeat).toBe(stored.record.hostSeat);
+
+    const next = await manager.rematch(roomId, 0);
+    expect(next.record.status).toBe('playing');
+  });
+
+  it('hands a mid-game leaver to the CPU rather than emptying the seat', async () => {
+    const { manager } = makeManager();
+    const host = await manager.createRoom({
+      playerCount: 2,
+      aiLevel: 'easy',
+      fillWithCpu: false,
+      name: 'Host',
+    });
+    const roomId = host.stored.record.roomId;
+    await manager.joinRoom(host.stored.record.code, 'Guest');
+    await manager.start(roomId, 0);
+
+    const after = await manager.leave(roomId, 1);
+    expect(after!.record.seats[1]!.connection).toBe('cpu-controlled');
+    expect(after!.record.status).toBe('playing');
+  });
+});
+
 describe('reconnect state machine', () => {
   it('holds the seat during the grace period and hands it to the CPU after', async () => {
     const config = makeConfig({ reconnectGraceMs: 60_000 });

@@ -1,34 +1,67 @@
-import { applyMove, defaultWallsPerPlayer, moverAtPly, type Move, type Orientation } from '@quoridor/engine';
+import {
+  applyMove,
+  defaultWallsPerPlayer,
+  moverAtPly,
+  posToNotation,
+  seatQuarterTurns,
+  wallToNotation,
+  type Move,
+  type Orientation,
+} from '@quoridor/engine';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Board, type BoardMode } from '../board/Board.js';
+import { Board, type BoardMode, type BoardPreview } from '../board/Board.js';
 import { useI18n } from '../i18n/index.js';
 import type { RoomView } from '../net/protocol.js';
 import { play, resume } from '../sound.js';
+import { useControlScheme } from '../state/prefs.js';
 import { displayName, seatColors } from './shared.js';
 import { Roster } from './Lobby.js';
 
 interface Props {
   room: RoomView;
   youIndex: number | null;
+  /** Watchers see everything and touch nothing. */
+  spectating: boolean;
   /** Held back while an optimistic move is still unconfirmed. */
   frozen: boolean;
   onMove: (move: Move, nextRoom: RoomView) => void;
   onLeave: () => void;
-  onHome: () => void;
+  onRematch: () => void;
 }
 
-export function Game({ room, youIndex, frozen, onMove, onLeave, onHome }: Props): React.JSX.Element {
+export function Game({
+  room,
+  youIndex,
+  spectating,
+  frozen,
+  onMove,
+  onLeave,
+  onRematch,
+}: Props): React.JSX.Element {
   const { t } = useI18n();
+  const control = useControlScheme();
   const [mode, setMode] = useState<BoardMode>('pawn');
   const [orientation, setOrientation] = useState<Orientation>('h');
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const [preview, setPreview] = useState<BoardPreview>({ target: null, active: false });
+  // Extra quarter turns on top of the seat's own, for watchers and for anyone
+  // who simply prefers a different angle.
+  const [flip, setFlip] = useState(0);
+  const [resultOpen, setResultOpen] = useState(false);
 
   const game = room.game;
+  const smart = control === 'smart';
   const colors = useMemo(() => seatColors(room.seats.length), [room.seats.length]);
   const finished = room.status === 'finished' || game?.winner !== null;
-  const yourTurn = !finished && !frozen && youIndex !== null && game?.turn === youIndex;
+  const yourTurn =
+    !finished && !frozen && !spectating && youIndex !== null && game?.turn === youIndex;
   const mover = game ? game.players[game.turn] : undefined;
   const wallsLeft = mover?.wallsLeft ?? 0;
+  const isHost = youIndex !== null && room.hostSeat === youIndex;
+
+  // Your own home row belongs at the bottom no matter which seat you drew.
+  const seat = youIndex === null ? undefined : room.seats[youIndex];
+  const viewRotation = (seat ? seatQuarterTurns(seat.seat) : 0) + flip;
 
   // Dropping back to pawn mode when the turn ends avoids a stale wall overlay
   // sitting over the board while an opponent thinks.
@@ -40,17 +73,22 @@ export function Game({ room, youIndex, frozen, onMove, onLeave, onHome }: Props)
     if (yourTurn && wallsLeft === 0) setMode('pawn');
   }, [yourTurn, wallsLeft]);
 
+  // A rematch reopens the sheet for the next result rather than leaving it shut.
+  useEffect(() => {
+    setResultOpen(room.status === 'finished');
+  }, [room.status, room.gameVersion]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'r' || event.key === 'R') {
         setOrientation((o) => (o === 'h' ? 'v' : 'h'));
-      } else if (event.key === 'w' || event.key === 'W') {
+      } else if (!smart && (event.key === 'w' || event.key === 'W')) {
         if (wallsLeft > 0) setMode((m) => (m === 'wall' ? 'pawn' : 'wall'));
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [wallsLeft]);
+  }, [smart, wallsLeft]);
 
   const lastLogged = room.moveLog.length;
   useEffect(() => {
@@ -76,6 +114,8 @@ export function Game({ room, youIndex, frozen, onMove, onLeave, onHome }: Props)
     [game, onMove, room, yourTurn],
   );
 
+  const handlePreview = useCallback((next: BoardPreview) => setPreview(next), []);
+
   if (!game) {
     return <p className="form__note">{t('errGeneric')}</p>;
   }
@@ -83,6 +123,16 @@ export function Game({ room, youIndex, frozen, onMove, onLeave, onHome }: Props)
   const turnName = displayName(room, game.turn, youIndex, t);
   const turnSeatIsCpu =
     room.seats[game.turn]?.kind === 'cpu' || room.seats[game.turn]?.connection === 'cpu-controlled';
+
+  // Read-out sits above the board so a thumb never covers the one thing that
+  // says what is about to happen - walls cannot be taken back.
+  const readout = !smart || !preview.active
+    ? ''
+    : preview.target === null
+      ? t('gameConfirmCancel')
+      : preview.target.kind === 'pawn'
+        ? t('gameConfirmPawn', { square: posToNotation(preview.target.pos) })
+        : t('gameConfirmWall', { wall: wallToNotation(preview.target.wall) });
 
   return (
     <div className="game">
@@ -112,69 +162,113 @@ export function Game({ room, youIndex, frozen, onMove, onLeave, onHome }: Props)
           </span>
         </div>
 
+        {smart && !spectating && (
+          <p
+            className={`readout${readout ? ' readout--active' : ''}`}
+            aria-live="polite"
+            role="status"
+          >
+            {readout || (yourTurn ? t('gameSmartHint') : '\u00a0')}
+          </p>
+        )}
+
         <Board
           game={game}
           colors={colors}
           youIndex={youIndex}
           interactive={yourTurn}
+          control={control}
+          viewRotation={viewRotation}
           mode={mode}
           orientation={orientation}
           onMove={handleMove}
-          labels={null}
+          onPreview={handlePreview}
         />
 
         <div className="controls">
-          <div className="segmented">
-            <button
-              type="button"
-              className="segmented__item"
-              aria-pressed={mode === 'pawn'}
-              disabled={!yourTurn}
-              onClick={() => setMode('pawn')}
-            >
-              {t('gameModeMove')}
-            </button>
-            <button
-              type="button"
-              className="segmented__item"
-              aria-pressed={mode === 'wall'}
-              disabled={!yourTurn || wallsLeft === 0}
-              onClick={() => setMode('wall')}
-            >
-              {wallsLeft === 0 ? t('gameNoWalls') : `${t('gameModeWall')} · ${wallsLeft}`}
-            </button>
-          </div>
+          {spectating ? null : smart ? (
+            <p className="form__note" style={{ flex: 1, margin: 0 }}>
+              {t('gameSmartHintTouch')}
+            </p>
+          ) : (
+            <>
+              <div className="segmented">
+                <button
+                  type="button"
+                  className="segmented__item"
+                  aria-pressed={mode === 'pawn'}
+                  disabled={!yourTurn}
+                  onClick={() => setMode('pawn')}
+                >
+                  {t('gameModeMove')}
+                </button>
+                <button
+                  type="button"
+                  className="segmented__item"
+                  aria-pressed={mode === 'wall'}
+                  disabled={!yourTurn || wallsLeft === 0}
+                  onClick={() => setMode('wall')}
+                >
+                  {wallsLeft === 0 ? t('gameNoWalls') : `${t('gameModeWall')} · ${wallsLeft}`}
+                </button>
+              </div>
+              <button
+                type="button"
+                className="btn"
+                disabled={mode !== 'wall'}
+                title={t('gameRotateHint')}
+                onClick={() => setOrientation((o) => (o === 'h' ? 'v' : 'h'))}
+              >
+                {orientation === 'h' ? '⇔' : '⇕'}
+              </button>
+            </>
+          )}
           <button
             type="button"
             className="btn"
-            disabled={mode !== 'wall'}
-            title={t('gameRotateHint')}
-            onClick={() => setOrientation((o) => (o === 'h' ? 'v' : 'h'))}
+            title={t('gameFlipView')}
+            aria-label={t('gameFlipView')}
+            onClick={() => setFlip((k) => (k + 1) % 4)}
           >
-            {orientation === 'h' ? '⇔' : '⇕'}
+            ⟲
           </button>
         </div>
       </div>
 
       <aside className="game__side">
+        {(spectating || room.spectators > 0) && (
+          <p className="form__note" style={{ margin: 0 }}>
+            {spectating && `${t('gameSpectating')} · `}
+            {t('gameSpectatorCount', { count: room.spectators })}
+          </p>
+        )}
         <Roster room={room} youIndex={youIndex} />
         <MoveLog room={room} colors={colors} />
-        {finished ? (
-          <button type="button" className="btn btn--primary btn--wide" onClick={onHome}>
-            {t('gameRematch')}
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="btn btn--danger btn--wide"
-            onClick={() => setConfirmLeave(true)}
-          >
-            {t('gameResign')}
+        {finished && !spectating && isHost && (
+          <button type="button" className="btn btn--primary btn--wide" onClick={onRematch}>
+            {t('gamePlayAgain')}
           </button>
         )}
+        <button
+          type="button"
+          className="btn btn--danger btn--wide"
+          onClick={() => (spectating || finished ? onLeave() : setConfirmLeave(true))}
+        >
+          {spectating ? t('gameStopWatching') : finished ? t('gameLeaveRoom') : t('gameResign')}
+        </button>
       </aside>
 
-      {finished && <ResultSheet room={room} youIndex={youIndex} onClose={onHome} />}
+      {finished && resultOpen && (
+        <ResultSheet
+          room={room}
+          youIndex={youIndex}
+          spectating={spectating}
+          isHost={isHost}
+          onRematch={onRematch}
+          onClose={() => setResultOpen(false)}
+          onLeave={onLeave}
+        />
+      )}
 
       {confirmLeave && (
         <div className="sheet-backdrop" role="dialog" aria-modal="true">
@@ -257,14 +351,26 @@ function MoveLog({ room, colors }: { room: RoomView; colors: readonly string[] }
   );
 }
 
+/**
+ * The table stays together between games, so this sheet offers a rematch first
+ * and only leaves the room when that is what the player actually asked for.
+ */
 function ResultSheet({
   room,
   youIndex,
+  spectating,
+  isHost,
+  onRematch,
   onClose,
+  onLeave,
 }: {
   room: RoomView;
   youIndex: number | null;
+  spectating: boolean;
+  isHost: boolean;
+  onRematch: () => void;
   onClose: () => void;
+  onLeave: () => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const winner = room.game?.winner ?? 0;
@@ -273,13 +379,24 @@ function ResultSheet({
     <div className="sheet-backdrop" role="dialog" aria-modal="true">
       <div className="sheet result">
         <div className="result__medal" aria-hidden="true">
-          {youWon ? '🏆' : '🎌'}
+          {youWon && !spectating ? '🏆' : '🎌'}
         </div>
         <h2 className="result__title">
-          {youWon ? t('gameYouWin') : t('gameWinner', { name: displayName(room, winner, youIndex, t) })}
+          {youWon && !spectating
+            ? t('gameYouWin')
+            : t('gameWinner', { name: displayName(room, winner, youIndex, t) })}
         </h2>
-        <button type="button" className="btn btn--primary btn--wide" onClick={onClose}>
-          {t('gameRematch')}
+        {!spectating && isHost && (
+          <button type="button" className="btn btn--primary btn--wide" onClick={onRematch}>
+            {t('gamePlayAgain')}
+          </button>
+        )}
+        {!spectating && !isHost && <p className="form__note">{t('gameRematchWait')}</p>}
+        <button type="button" className="btn btn--wide" onClick={onClose}>
+          {t('gameCloseResult')}
+        </button>
+        <button type="button" className="btn btn--danger btn--wide" onClick={onLeave}>
+          {spectating ? t('gameStopWatching') : t('gameLeaveRoom')}
         </button>
       </div>
     </div>

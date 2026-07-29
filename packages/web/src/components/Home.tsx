@@ -7,7 +7,8 @@ import { loadName, saveName } from '../state/storage.js';
 export type HomeIntent =
   | { kind: 'cpu'; playerCount: PlayerCount; aiLevel: AiLevel; name: string }
   | { kind: 'host'; playerCount: PlayerCount; aiLevel: AiLevel; fillWithCpu: boolean; name: string }
-  | { kind: 'join'; code: string; name: string };
+  | { kind: 'join'; code: string; name: string }
+  | { kind: 'watch'; code: string };
 
 interface Props {
   busy: boolean;
@@ -16,7 +17,7 @@ interface Props {
   onShowRules: () => void;
 }
 
-type View = 'menu' | 'cpu' | 'host' | 'join';
+type View = 'menu' | 'cpu' | 'host' | 'join' | 'watch';
 
 const PLAYER_COUNTS: PlayerCount[] = [2, 3, 4];
 const LEVELS: { value: AiLevel; key: MessageKey }[] = [
@@ -86,6 +87,14 @@ export function Home({ busy, canAct, onSubmit, onShowRules }: Props): React.JSX.
             onClick={() => setView('join')}
           />
           <MenuItem
+            icon="👀"
+            accent="var(--pink)"
+            label={t('homeWatch')}
+            hint={t('homeWatchHint')}
+            disabled={!canAct}
+            onClick={() => setView('watch')}
+          />
+          <MenuItem
             icon="📖"
             accent="var(--purple)"
             label={t('homeHowTo')}
@@ -117,12 +126,30 @@ export function Home({ busy, canAct, onSubmit, onShowRules }: Props): React.JSX.
     </button>
   );
 
-  if (view === 'join') {
+  const codeField = (
+    <label className="field">
+      <span className="field__label">{t('joinCode')}</span>
+      <input
+        className="code-input"
+        value={code}
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        pattern="\d*"
+        maxLength={6}
+        placeholder="000000"
+        onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+      />
+    </label>
+  );
+
+  if (view === 'join' || view === 'watch') {
+    // Watching needs nothing but the code: there is no seat to label.
+    const watching = view === 'watch';
     return (
       <div className="home">
         {back}
         <section className="card">
-          <h2 className="card__title">{t('joinTitle')}</h2>
+          <h2 className="card__title">{watching ? t('watchTitle') : t('joinTitle')}</h2>
           <form
             className="form"
             style={{ marginTop: 18 }}
@@ -132,30 +159,23 @@ export function Home({ busy, canAct, onSubmit, onShowRules }: Props): React.JSX.
                 setProblem('errInvalidCode');
                 return;
               }
+              if (watching) {
+                setProblem(null);
+                onSubmit({ kind: 'watch', code });
+                return;
+              }
               submit({ kind: 'join', code, name: trimmedName });
             }}
           >
-            <label className="field">
-              <span className="field__label">{t('joinCode')}</span>
-              <input
-                className="code-input"
-                value={code}
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                pattern="\d*"
-                maxLength={6}
-                placeholder="000000"
-                onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-              />
-            </label>
-            {nameField}
+            {codeField}
+            {!watching && nameField}
             {problem && <p className="form__note">{t(problem)}</p>}
             <button
               type="submit"
               className="btn btn--primary btn--wide"
               disabled={busy || !canAct || code.length !== 6}
             >
-              {t('joinAction')}
+              {watching ? t('watchAction') : t('joinAction')}
             </button>
           </form>
         </section>

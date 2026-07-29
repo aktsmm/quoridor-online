@@ -1,7 +1,7 @@
 import type { GameState, Move } from './types.js';
 import { notationToPos, notationToWall, posToNotation, wallToNotation } from './coords.js';
 
-/** `"e2"` for a pawn move, `"c5v"` for a wall - the usual Quoridor shorthand. */
+/** `"e2"` for a pawn move, `"c5v"` for a wall - the usual wall-game shorthand. */
 export function moveToNotation(move: Move): string {
   return move.type === 'pawn' ? posToNotation(move.to) : wallToNotation(move.wall);
 }

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Quoridor web client: Apple-styled board, lobby and online play",
+  "description": "Korikori web client: Apple-styled board, lobby and online play",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build",

@@ -239,6 +239,30 @@ export class Hub {
         return;
       }
 
+      case 'room.watch': {
+        const stored = await this.#manager.getByCode(message.code);
+        if (!stored) {
+          // Same metering as a failed join so watching cannot be used to sweep
+          // the 6-digit code space.
+          this.#joinFailureLimiter.tryConsume(client.ip);
+          throw new RoomError('room-unavailable');
+        }
+        const roomId = stored.record.roomId;
+        if (this.#spectatorCount(roomId) >= this.#config.limits.maxSpectatorsPerRoom) {
+          throw new RoomError('capacity', 'too many spectators');
+        }
+        this.#attach(client, roomId, null);
+        this.#send(client, {
+          type: 'watching',
+          roomId,
+          code: stored.record.code,
+          ...ridOf(message),
+        });
+        // Reaches the new watcher and refreshes the count for everyone else.
+        this.#broadcast(stored);
+        return;
+      }
+
       case 'room.start': {
         const { roomId, seatIndex } = this.#requireSeat(client);
         const stored = await this.#manager.start(roomId, seatIndex);
@@ -247,7 +271,23 @@ export class Hub {
         return;
       }
 
+      case 'room.rematch': {
+        const { roomId, seatIndex } = this.#requireSeat(client);
+        const stored = await this.#manager.rematch(roomId, seatIndex);
+        this.#broadcast(stored);
+        void this.#driveCpu(roomId);
+        return;
+      }
+
       case 'room.leave': {
+        // Watchers hold no seat, so there is nothing to hand back.
+        if (client.roomId !== null && client.seatIndex === null) {
+          const roomId = client.roomId;
+          this.#detach(client);
+          const stored = await this.#manager.get(roomId);
+          if (stored) this.#broadcast(stored);
+          return;
+        }
         const { roomId, seatIndex } = this.#requireSeat(client);
         const stored = await this.#manager.leave(roomId, seatIndex);
         this.#detach(client);
@@ -283,7 +323,7 @@ export class Hub {
     return { roomId: client.roomId, seatIndex: client.seatIndex };
   }
 
-  #attach(client: ClientState, roomId: string, seatIndex: number): void {
+  #attach(client: ClientState, roomId: string, seatIndex: number | null): void {
     this.#detach(client);
     client.roomId = roomId;
     client.seatIndex = seatIndex;
@@ -307,6 +347,15 @@ export class Hub {
     client.seatIndex = null;
   }
 
+  /** Live seat-less connections in a room. Not stored, only counted. */
+  #spectatorCount(roomId: string): number {
+    const set = this.#byRoom.get(roomId);
+    if (!set) return 0;
+    let count = 0;
+    for (const client of set) if (client.seatIndex === null) count += 1;
+    return count;
+  }
+
   #evictSeat(roomId: string, seatIndex: number, keep: ClientState): void {
     const set = this.#byRoom.get(roomId);
     if (!set) return;
@@ -323,7 +372,21 @@ export class Hub {
     const roomId = client.roomId;
     const seatIndex = client.seatIndex;
     this.#detach(client);
-    if (roomId === null || seatIndex === null || this.#shuttingDown) return;
+    if (roomId === null || this.#shuttingDown) return;
+
+    if (seatIndex === null) {
+      // A watcher left; the only visible change is the spectator count.
+      if (!this.#byRoom.has(roomId)) return;
+      try {
+        const stored = await this.#manager.get(roomId);
+        if (stored) this.#broadcast(stored);
+      } catch (error) {
+        this.#log.warn('spectator disconnect bookkeeping failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return;
+    }
 
     try {
       const stored = await this.#manager.markDisconnected(roomId, seatIndex);
@@ -406,7 +469,7 @@ export class Hub {
 
     this.#roomStatus.set(stored.record.roomId, stored.record.status);
 
-    const room = toRoomView(stored.record);
+    const room = toRoomView(stored.record, this.#spectatorCount(stored.record.roomId));
     const message: ServerMessage =
       stored.record.status === 'lobby'
         ? { type: 'room.state', room }

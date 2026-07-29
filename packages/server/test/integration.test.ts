@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { legalPawnMoves, type GameState } from '@quoridor/engine';
+import {
+  distanceToGoal,
+  legalPawnMoves,
+  tryApplyMove,
+  type GameState,
+  type Move,
+} from '@quoridor/engine';
 import { createApp, type App } from '../src/app.js';
 import { DEFAULT_LIMITS, type ServerConfig } from '../src/config.js';
 import { MemoryRoomStore } from '../src/rooms/store.js';
@@ -331,6 +337,201 @@ describe('websocket vertical slice', () => {
   });
 });
 
+describe('watching a room', () => {
+  it('lets a latecomer watch a game already in progress', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(store);
+
+    const host = await connect(url);
+    host.send({ type: 'room.create', playerCount: 2, aiLevel: 'easy', fillWithCpu: true, name: 'Host' });
+    const joined = await host.nextOfType('joined');
+    await host.nextOfType('room.state');
+    host.send({ type: 'room.start' });
+    let state = await myTurn(host);
+
+    const watcher = await connect(url);
+    watcher.send({ type: 'room.watch', rid: 5, code: joined.code });
+    const watching = await watcher.nextOfType('watching');
+    expect(watching.rid).toBe(5);
+    expect(watching.code).toBe(joined.code);
+
+    // The position arrives without asking, and the watcher is counted.
+    const seen = roomOf(await watcher.next((m) => m.type === 'game.state'));
+    expect(seen.status).toBe('playing');
+    expect(seen.game!.ply).toBe(state.game!.ply);
+    expect(seen.spectators).toBe(1);
+    // A watcher must never be handed the players' credentials.
+    expect(JSON.stringify(seen)).not.toContain(joined.playerToken);
+
+    // And it keeps following the game afterwards.
+    state = await playOneMove(host, state);
+    const followed = await watcher.next(
+      (m) => m.type === 'game.state' && m.room.gameVersion >= state.gameVersion,
+    );
+    expect(roomOf(followed).moveLog.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('refuses to let a watcher touch the game', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(store);
+
+    const host = await connect(url);
+    host.send({ type: 'room.create', playerCount: 2, aiLevel: 'easy', fillWithCpu: true, name: 'Host' });
+    const joined = await host.nextOfType('joined');
+    await host.nextOfType('room.state');
+    host.send({ type: 'room.start' });
+    const state = await myTurn(host);
+
+    const watcher = await connect(url);
+    watcher.send({ type: 'room.watch', code: joined.code });
+    await watcher.nextOfType('watching');
+    await watcher.next((m) => m.type === 'game.state');
+
+    watcher.send({
+      type: 'game.move',
+      rid: 1,
+      expectedGameVersion: state.gameVersion,
+      move: anyMove(state.game!),
+    });
+    expect((await watcher.nextOfType('error')).code).toBe('invalid-request');
+
+    watcher.send({ type: 'room.start', rid: 2 });
+    expect((await watcher.nextOfType('error')).code).toBe('invalid-request');
+
+    watcher.send({ type: 'room.rematch', rid: 3 });
+    expect((await watcher.nextOfType('error')).code).toBe('invalid-request');
+
+    // If any of that had landed, the position would have moved on and the
+    // host's own move would now fail with a version conflict.
+    const after = await playOneMove(host, state);
+    expect(after.game!.ply).toBe(state.game!.ply + 1);
+  });
+
+  it('caps the number of watchers per room', async () => {
+    const store = new MemoryRoomStore();
+    const cap = 2;
+    expect(DEFAULT_LIMITS.maxSpectatorsPerRoom).toBe(10);
+    const { url } = await startApp(
+      store,
+      makeConfig({ limits: { ...DEFAULT_LIMITS, maxSpectatorsPerRoom: cap } }),
+    );
+
+    const host = await connect(url);
+    host.send({ type: 'room.create', playerCount: 2, aiLevel: 'easy', fillWithCpu: true, name: 'Host' });
+    const joined = await host.nextOfType('joined');
+    await host.nextOfType('room.state');
+
+    for (let i = 0; i < cap; i += 1) {
+      const watcher = await connect(url);
+      watcher.send({ type: 'room.watch', code: joined.code });
+      await watcher.nextOfType('watching');
+    }
+
+    const overflow = await connect(url);
+    overflow.send({ type: 'room.watch', code: joined.code });
+    expect((await overflow.nextOfType('error')).code).toBe('capacity');
+  });
+
+  it('frees a watcher slot when the watcher leaves', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(
+      store,
+      makeConfig({ limits: { ...DEFAULT_LIMITS, maxSpectatorsPerRoom: 1 } }),
+    );
+
+    const host = await connect(url);
+    host.send({ type: 'room.create', playerCount: 2, aiLevel: 'easy', fillWithCpu: true, name: 'Host' });
+    const joined = await host.nextOfType('joined');
+    await host.nextOfType('room.state');
+
+    const first = await connect(url);
+    first.send({ type: 'room.watch', code: joined.code });
+    await first.nextOfType('watching');
+    expect(roomOf(await first.next((m) => m.type === 'room.state')).spectators).toBe(1);
+
+    first.send({ type: 'room.leave' });
+    // The host sees the count drop, which is also how the slot is known to be free.
+    await host.next((m) => m.type === 'room.state' && m.room.spectators === 0);
+
+    const second = await connect(url);
+    second.send({ type: 'room.watch', code: joined.code });
+    await second.nextOfType('watching');
+  });
+
+  it('meters a watch on a code that does not exist', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(store);
+    const client = await connect(url);
+
+    client.send({ type: 'room.watch', rid: 9, code: '000000' });
+    const error = await client.nextOfType('error');
+    expect(error.code).toBe('room-unavailable');
+    expect(error.rid).toBe(9);
+  });
+});
+
+describe('playing again', () => {
+  it('starts the next game in the same room when the host asks', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(store);
+
+    const host = await connect(url);
+    host.send({ type: 'room.create', playerCount: 2, aiLevel: 'easy', fillWithCpu: true, name: 'Host' });
+    const joined = await host.nextOfType('joined');
+    await host.nextOfType('room.state');
+    host.send({ type: 'room.start' });
+
+    const over = roomOf(await raceToTheEnd(host));
+    expect(over.status).toBe('finished');
+    expect(over.moveLog.length).toBeGreaterThan(0);
+
+    host.send({ type: 'room.rematch' });
+    const next = roomOf(
+      await host.next(
+        (m) =>
+          m.type === 'game.state' &&
+          m.room.status === 'playing' &&
+          m.room.gameVersion > over.gameVersion,
+      ),
+    );
+    expect(next.moveLog).toEqual([]);
+    expect(next.game!.ply).toBe(0);
+    // Same room, same code: nobody had to go back to the home screen.
+    expect(next.code).toBe(joined.code);
+    expect(next.seats.map((s) => s.name)).toEqual(over.seats.map((s) => s.name));
+  }, 30_000);
+
+  it('lets a new player take a seat that was left after the game', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(store);
+
+    const host = await connect(url);
+    host.send({ type: 'room.create', playerCount: 2, aiLevel: 'easy', fillWithCpu: false, name: 'Host' });
+    const joined = await host.nextOfType('joined');
+    await host.nextOfType('room.state');
+
+    const guest = await connect(url);
+    guest.send({ type: 'room.join', code: joined.code, name: 'Guest' });
+    await guest.nextOfType('joined');
+    await host.nextOfType('room.state');
+
+    host.send({ type: 'room.start' });
+    const over = roomOf(await raceToTheEnd(host, guest));
+    expect(over.status).toBe('finished');
+
+    guest.send({ type: 'room.leave' });
+    await host.next(
+      (m) =>
+        (m.type === 'room.state' || m.type === 'game.state') && m.room.seats[1]!.name === '',
+      10_000,
+    );
+
+    const newcomer = await connect(url);
+    newcomer.send({ type: 'room.join', code: joined.code, name: 'Newcomer' });
+    expect((await newcomer.nextOfType('joined')).seatIndex).toBe(1);
+  }, 30_000);
+});
+
 async function playOneMove(client: TestClient, state: RoomView): Promise<RoomView> {
   client.send({
     type: 'game.move',
@@ -361,4 +562,62 @@ function myTurn(client: TestClient, seatIndex = 0): Promise<RoomView> {
   return client
     .next((m) => m.type === 'game.state' && m.room.game?.turn === seatIndex, 10_000)
     .then(roomOf);
+}
+
+/** The step that gets this player closest to their goal, or wins outright. */
+function goalMove(game: GameState, seat: number): Move {
+  let best: Move | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const to of legalPawnMoves(game)) {
+    const move: Move = { type: 'pawn', to };
+    const result = tryApplyMove(game, move);
+    if (!result.ok) continue;
+    if (result.state.winner === seat) return move;
+    const distance = distanceToGoal(result.state, seat);
+    if (distance >= 0 && distance < bestDistance) {
+      bestDistance = distance;
+      best = move;
+    }
+  }
+
+  if (!best) throw new Error('no legal pawn move to play');
+  return best;
+}
+
+/**
+ * Plays the given seats straight at their goals until the game ends.
+ *
+ * Rushing is the quickest way to reach a finished room over a real socket,
+ * which is what the rematch tests actually need.
+ */
+async function raceToTheEnd(host: TestClient, guest?: TestClient): Promise<ServerMessage> {
+  const bySeat = new Map<number, TestClient>([[0, host]]);
+  if (guest) bySeat.set(1, guest);
+  let acted = -1;
+
+  for (let i = 0; i < 300; i += 1) {
+    const message = await host.next(
+      (m) =>
+        m.type === 'game.over' ||
+        (m.type === 'game.state' &&
+          m.room.status === 'playing' &&
+          m.room.game !== null &&
+          m.room.gameVersion > acted &&
+          bySeat.has(m.room.game.turn)),
+      15_000,
+    );
+    if (message.type === 'game.over') return message;
+
+    const room = roomOf(message);
+    acted = room.gameVersion;
+    const seat = room.game!.turn;
+    bySeat.get(seat)!.send({
+      type: 'game.move',
+      expectedGameVersion: room.gameVersion,
+      move: goalMove(room.game!, seat),
+    });
+  }
+
+  throw new Error('the game never finished');
 }

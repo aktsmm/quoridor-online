@@ -5,6 +5,8 @@ import { clearCredentials, loadCredentials, saveCredentials, type Credentials } 
 
 export type Screen = 'home' | 'lobby' | 'game';
 
+export type SessionRole = 'player' | 'spectator';
+
 export interface SessionSnapshot {
   readonly status: ConnectionStatus;
   readonly retryAt: number | null;
@@ -12,6 +14,8 @@ export interface SessionSnapshot {
   readonly greeted: boolean;
   readonly room: RoomView | null;
   readonly seatIndex: number | null;
+  /** Watchers receive every broadcast but can never act. */
+  readonly role: SessionRole;
   readonly error: { code: ErrorCode; message: string } | null;
   readonly busy: boolean;
   /** Set while the local player's move is shown before the server confirms it. */
@@ -35,6 +39,7 @@ const EMPTY: SessionSnapshot = {
   greeted: false,
   room: null,
   seatIndex: null,
+  role: 'player',
   error: null,
   busy: false,
   optimistic: false,
@@ -120,19 +125,28 @@ export class SessionStore {
     this.#send({ type: 'room.join', rid: this.#connection.nextRid(), code, name });
   }
 
+  /** Watch-only: no name, no seat, and every action stays disabled. */
+  watchRoom(code: string): void {
+    this.#autoStart = false;
+    this.#patch({ busy: true, error: null, role: 'spectator', seatIndex: null });
+    this.#send({ type: 'room.watch', rid: this.#connection.nextRid(), code });
+  }
+
   startGame(): void {
     this.#autoStart = false;
     this.#patch({ busy: true, error: null });
     this.#send({ type: 'room.start', rid: this.#connection.nextRid() });
   }
 
-  leaveRoom(): void {
-    this.#send({ type: 'room.leave', rid: this.#connection.nextRid() });
-    this.#forgetRoom();
+  /** Deals the next game without breaking up the table. Host only. */
+  rematch(): void {
+    this.#autoStart = false;
+    this.#patch({ busy: true, error: null });
+    this.#send({ type: 'room.rematch', rid: this.#connection.nextRid() });
   }
 
-  /** Called when the player dismisses a finished game rather than leaving mid-play. */
-  goHome(): void {
+  leaveRoom(): void {
+    this.#send({ type: 'room.leave', rid: this.#connection.nextRid() });
     this.#forgetRoom();
   }
 
@@ -160,6 +174,10 @@ export class SessionStore {
   #resume(): void {
     const credentials = this.#credentials;
     if (!credentials) return;
+    if (credentials.spectator === true) {
+      this.#send({ type: 'room.watch', rid: this.#connection.nextRid(), code: credentials.code });
+      return;
+    }
     this.#send({
       type: 'room.reconnect',
       rid: this.#connection.nextRid(),
@@ -182,7 +200,19 @@ export class SessionStore {
           playerToken: message.playerToken,
         };
         saveCredentials(this.#credentials);
-        this.#patch({ seatIndex: message.seatIndex, busy: false });
+        this.#patch({ seatIndex: message.seatIndex, role: 'player', busy: false });
+        return;
+      }
+
+      case 'watching': {
+        this.#credentials = {
+          roomId: message.roomId,
+          code: message.code,
+          playerToken: '',
+          spectator: true,
+        };
+        saveCredentials(this.#credentials);
+        this.#patch({ seatIndex: null, role: 'spectator', busy: false });
         return;
       }
 
@@ -227,7 +257,7 @@ export class SessionStore {
     this.#serverRoom = null;
     this.#autoStart = false;
     clearCredentials();
-    this.#patch({ room: null, seatIndex: null, optimistic: false, busy: false, error: null });
+    this.#patch({ room: null, seatIndex: null, role: 'player', optimistic: false, busy: false, error: null });
   }
 
   #send(message: Parameters<Connection['send']>[0]): boolean {

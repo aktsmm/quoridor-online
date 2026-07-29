@@ -6,15 +6,17 @@ import { displayName, openSeatCount, seatLabelKey } from './shared.js';
 interface Props {
   room: RoomView;
   youIndex: number | null;
+  /** Watchers see the roster and the code, but never the start button. */
+  spectating: boolean;
   busy: boolean;
   onStart: () => void;
   onLeave: () => void;
 }
 
-export function Lobby({ room, youIndex, busy, onStart, onLeave }: Props): React.JSX.Element {
+export function Lobby({ room, youIndex, spectating, busy, onStart, onLeave }: Props): React.JSX.Element {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
-  const isHost = youIndex !== null && room.hostSeat === youIndex;
+  const isHost = !spectating && youIndex !== null && room.hostSeat === youIndex;
   const waiting = room.fillWithCpu ? 0 : openSeatCount(room);
 
   const copy = async (): Promise<void> => {
@@ -72,12 +74,12 @@ export function Lobby({ room, youIndex, busy, onStart, onLeave }: Props): React.
         </button>
       ) : (
         <p className="form__note" style={{ textAlign: 'center' }}>
-          {t('lobbyWaitingHost')}
+          {spectating ? t('watchWaiting') : t('lobbyWaitingHost')}
         </p>
       )}
 
       <button type="button" className="btn btn--danger btn--wide" onClick={onLeave}>
-        {t('lobbyLeave')}
+        {spectating ? t('gameStopWatching') : t('lobbyLeave')}
       </button>
     </div>
   );

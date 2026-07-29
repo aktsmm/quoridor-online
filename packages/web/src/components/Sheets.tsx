@@ -1,14 +1,28 @@
 import { useI18n, type Lang } from '../i18n/index.js';
 import { isSoundEnabled, resume, setSoundEnabled } from '../sound.js';
+import {
+  setControlScheme,
+  setHapticsEnabled,
+  useControlScheme,
+  useHaptics,
+  type ControlScheme,
+} from '../state/prefs.js';
 import { useState } from 'react';
 
 interface Props {
   onClose: () => void;
 }
 
+const SCHEMES: { value: ControlScheme; key: 'settingsControlsSmart' | 'settingsControlsClassic' }[] = [
+  { value: 'smart', key: 'settingsControlsSmart' },
+  { value: 'classic', key: 'settingsControlsClassic' },
+];
+
 export function SettingsSheet({ onClose }: Props): React.JSX.Element {
   const { t, lang, setLang } = useI18n();
   const [sound, setSound] = useState(isSoundEnabled);
+  const controls = useControlScheme();
+  const haptics = useHaptics();
 
   const toggleSound = (): void => {
     const next = !sound;
@@ -39,6 +53,24 @@ export function SettingsSheet({ onClose }: Props): React.JSX.Element {
           </div>
         </div>
 
+        <div className="form__row">
+          <span className="field__label">{t('settingsControls')}</span>
+          <div className="segmented">
+            {SCHEMES.map((scheme) => (
+              <button
+                key={scheme.value}
+                type="button"
+                className="segmented__item"
+                aria-pressed={controls === scheme.value}
+                onClick={() => setControlScheme(scheme.value)}
+              >
+                {t(scheme.key)}
+              </button>
+            ))}
+          </div>
+          <p className="form__note">{t('settingsControlsHint')}</p>
+        </div>
+
         <div className="toggle-row">
           <span className="field__label">{t('settingsSound')}</span>
           <button
@@ -48,6 +80,20 @@ export function SettingsSheet({ onClose }: Props): React.JSX.Element {
             aria-checked={sound}
             aria-label={t('settingsSound')}
             onClick={toggleSound}
+          >
+            <span className="switch__knob" />
+          </button>
+        </div>
+
+        <div className="toggle-row">
+          <span className="field__label">{t('settingsHaptics')}</span>
+          <button
+            type="button"
+            className="switch"
+            role="switch"
+            aria-checked={haptics}
+            aria-label={t('settingsHaptics')}
+            onClick={() => setHapticsEnabled(!haptics)}
           >
             <span className="switch__knob" />
           </button>

@@ -45,6 +45,31 @@
   pointer-events: none;
 }
 
+/*
+ * Smart controls hit-test here instead of on individual buttons, so one press
+ * can slide between a pawn move and either wall orientation before it commits.
+ */
+.board__layer--resolver {
+  z-index: 6;
+}
+
+.board__layer--live {
+  pointer-events: auto;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.square--preview {
+  box-shadow: inset 0 0 0 3px var(--seat-color);
+  background: color-mix(in srgb, var(--seat-color) 38%, transparent);
+}
+
+.wall-hit--inert {
+  pointer-events: none;
+}
+
 .square {
   position: absolute;
   border-radius: 22%;

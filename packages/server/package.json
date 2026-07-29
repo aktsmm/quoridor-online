@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Authoritative Quoridor game server: rooms, reconnects and Table Storage snapshots",
+  "description": "Authoritative game server: rooms, reconnects and Table Storage snapshots",
   "main": "./dist/main.js",
   "scripts": {
     "build": "tsc -b",

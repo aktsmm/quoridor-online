@@ -1,6 +1,6 @@
 /** English messages. This object's shape is the contract every locale must meet. */
 export const en = {
-  appName: 'Quoridor',
+  appName: 'Korikori',
   tagline: 'Race to the far side. Wall off everyone else.',
 
   // --- connection ---
@@ -21,6 +21,8 @@ export const en = {
   homeJoin: 'Join a room',
   homeJoinHint: 'Enter a friend’s 6-digit code',
   homeHowTo: 'How to play',
+  homeWatch: 'Watch a game',
+  homeWatchHint: 'Enter a 6-digit code, no name needed',
   homeBack: 'Back',
 
   // --- setup ---
@@ -29,7 +31,7 @@ export const en = {
   setupPlayers2: '2 players',
   setupPlayers3: '3 players',
   setupPlayers4: '4 players',
-  setupPlayers3Note: '3-player Quoridor is a house rule, not part of the official game.',
+  setupPlayers3Note: '3-player mode is a house rule, not part of the classic game.',
   setupLevel: 'CPU level',
   setupLevelEasy: 'Easy',
   setupLevelNormal: 'Normal',
@@ -49,6 +51,11 @@ export const en = {
   joinCode: 'Room code',
   joinCodeHint: '6 digits',
   joinAction: 'Join',
+
+  // --- watch ---
+  watchTitle: 'Watch a game',
+  watchAction: 'Watch',
+  watchWaiting: 'Waiting for the game to start…',
 
   // --- lobby ---
   lobbyTitle: 'Waiting room',
@@ -88,6 +95,18 @@ export const en = {
   gameDisconnected: 'Disconnected',
   gameSpectating: 'Watching',
   gameUndoUnavailable: 'Undo is not available in online games.',
+  gameSmartHint: 'Tap a square to move. Press and slide along a groove for a wall.',
+  gameSmartHintTouch: 'Slide off the board to cancel.',
+  gameConfirmPawn: 'Move to {square}',
+  gameConfirmWall: 'Wall at {wall}',
+  gameConfirmCancel: 'Release to cancel',
+  gameFlipView: 'Rotate view',
+  gameSpectatorCount: '{count} watching',
+  gameStopWatching: 'Stop watching',
+  gamePlayAgain: 'Play again',
+  gameRematchWait: 'Waiting for the host to start the next game…',
+  gameCloseResult: 'Show the board',
+  gameLeaveRoom: 'Leave room',
 
   // --- seats ---
   seatSouth: 'South',
@@ -102,6 +121,12 @@ export const en = {
   settingsSound: 'Sound',
   settingsSoundOn: 'On',
   settingsSoundOff: 'Off',
+  settingsHaptics: 'Vibration',
+  settingsControls: 'Board controls',
+  settingsControlsSmart: 'Smart',
+  settingsControlsClassic: 'Classic',
+  settingsControlsHint:
+    'Smart works out a move or a wall from where you point. Classic keeps the move/wall and orientation toggles.',
   settingsClose: 'Done',
 
   // --- rules ---

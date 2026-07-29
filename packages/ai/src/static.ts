@@ -7,8 +7,8 @@ import { pawnMove } from './position.js';
 import { randomInt } from './rng.js';
 
 /** Root wall candidates come from the whole board, not just the hot squares. */
-const NORMAL_WALL_STEPS = 12;
-const NORMAL_WALL_LIMIT = 64;
+const STATIC_WALL_STEPS = 12;
+const STATIC_WALL_LIMIT = 64;
 
 export interface ScoredMove {
   readonly move: Move;
@@ -49,7 +49,7 @@ export function opponentsOf(position: SearchPosition, me: number): number[] {
 
 /**
  * Static value of the position `move` leads to, from `me`'s point of view.
- * This is the whole of the `normal` level and the root ordering for `hard`.
+ * This is the whole of the one-ply engine and the root ordering for the search.
  */
 export function scoreMove(position: SearchPosition, me: number, move: Move): number {
   const undo = position.apply(move);
@@ -69,13 +69,14 @@ export function scoreMoves(
 }
 
 /**
- * Intermediate opponent: looks one move ahead and takes the move that leaves
- * the best `min(opponent distance) - my distance`, walls included.
+ * One-ply engine: takes the move that leaves the best
+ * `min(opponent distance) - my distance`, walls included.
  *
  * It plays a sensible race and will block an opponent who is clearly ahead, but
  * it never asks what the reply would be, so its walls are easy to walk around.
+ * That makes it a fair beginner opponent rather than a pushover.
  */
-export function chooseNormalMove(
+export function chooseStaticMove(
   position: SearchPosition,
   me: number,
   rng: () => number,
@@ -87,8 +88,8 @@ export function chooseNormalMove(
     me,
     victims,
     tracer,
-    NORMAL_WALL_STEPS,
-    NORMAL_WALL_LIMIT,
+    STATIC_WALL_STEPS,
+    STATIC_WALL_LIMIT,
   );
   if (moves.length === 0) throw new Error('no legal move available');
 

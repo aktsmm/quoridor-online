@@ -9,9 +9,20 @@ import {
   cellRow,
   isPos,
   isWallAnchor,
+  inverseQuarterTurns,
+  normalizeQuarterTurns,
+  rotatePos,
+  rotateWall,
+  seatQuarterTurns,
+  NORTH,
+  EAST,
+  SOUTH,
+  WEST,
 } from '../src/coords.js';
 import { moveToNotation, notationToMove } from '../src/notation.js';
-import { allWalls } from '../src/board.js';
+import { Board, allWalls } from '../src/board.js';
+import { CLOCKWISE_SEATS, seatSetup } from '../src/game.js';
+import { BOARD_SIZE } from '../src/types.js';
 
 describe('coordinates and notation', () => {
   it('anchors a1 at the bottom left and i9 at the top right', () => {
@@ -64,5 +75,95 @@ describe('coordinates and notation', () => {
     expect(isWallAnchor({ c: 7, r: 7, o: 'h' })).toBe(true);
     expect(isWallAnchor({ c: 8, r: 0, o: 'h' })).toBe(false);
     expect(isWallAnchor({ c: 0, r: 0, o: 'x' as 'h' })).toBe(false);
+  });
+});
+
+/** Direction index for a step of one square, or -1 when the pair is not adjacent. */
+function dirBetween(from: { c: number; r: number }, to: { c: number; r: number }): number {
+  const dc = to.c - from.c;
+  const dr = to.r - from.r;
+  if (dc === 0 && dr === 1) return NORTH;
+  if (dc === 1 && dr === 0) return EAST;
+  if (dc === 0 && dr === -1) return SOUTH;
+  if (dc === -1 && dr === 0) return WEST;
+  return -1;
+}
+
+describe('board rotation', () => {
+  const turns = [0, 1, 2, 3] as const;
+
+  it('normalizes and inverts quarter turns', () => {
+    expect(normalizeQuarterTurns(-1)).toBe(3);
+    expect(normalizeQuarterTurns(5)).toBe(1);
+    expect(normalizeQuarterTurns(Number.NaN)).toBe(0);
+    for (const k of turns) {
+      expect(normalizeQuarterTurns(k + inverseQuarterTurns(k))).toBe(0);
+    }
+  });
+
+  it('returns to the identity after four turns', () => {
+    for (let c = 0; c < BOARD_SIZE; c += 1) {
+      for (let r = 0; r < BOARD_SIZE; r += 1) {
+        let pos = { c, r };
+        for (let i = 0; i < 4; i += 1) pos = rotatePos(pos, 1);
+        expect(pos).toEqual({ c, r });
+      }
+    }
+    for (const wall of allWalls()) {
+      let rotated = wall;
+      for (let i = 0; i < 4; i += 1) rotated = rotateWall(rotated, 1);
+      expect(rotated).toEqual(wall);
+    }
+  });
+
+  it('undoes a rotation with its inverse', () => {
+    for (const k of turns) {
+      for (const wall of allWalls()) {
+        expect(rotateWall(rotateWall(wall, k), inverseQuarterTurns(k))).toEqual(wall);
+        expect(isWallAnchor(rotateWall(wall, k))).toBe(true);
+      }
+      for (let c = 0; c < BOARD_SIZE; c += 1) {
+        for (let r = 0; r < BOARD_SIZE; r += 1) {
+          expect(rotatePos(rotatePos({ c, r }, k), inverseQuarterTurns(k))).toEqual({ c, r });
+        }
+      }
+    }
+  });
+
+  it('puts every seat on the bottom edge', () => {
+    for (const seat of CLOCKWISE_SEATS) {
+      const k = seatQuarterTurns(seat);
+      expect(rotatePos(seatSetup(seat).start, k)).toEqual({ c: 4, r: 0 });
+    }
+  });
+
+  it('keeps wall blocking identical under rotation', () => {
+    for (const wall of allWalls()) {
+      const plain = Board.from([wall]);
+      for (const k of turns) {
+        const rotated = Board.from([rotateWall(wall, k)]);
+        for (let c = 0; c < BOARD_SIZE; c += 1) {
+          for (let r = 0; r < BOARD_SIZE; r += 1) {
+            for (const [dc, dr] of [
+              [0, 1],
+              [1, 0],
+            ] as const) {
+              const to = { c: c + dc, r: r + dr };
+              if (to.c >= BOARD_SIZE || to.r >= BOARD_SIZE) continue;
+              const dir = dirBetween({ c, r }, to);
+              const blocked = !plain.canStep(cellIndex(c, r), dir);
+
+              const viewFrom = rotatePos({ c, r }, k);
+              const viewTo = rotatePos(to, k);
+              const viewDir = dirBetween(viewFrom, viewTo);
+              expect(viewDir).not.toBe(-1);
+              const viewBlocked = !rotated.canStep(cellIndex(viewFrom.c, viewFrom.r), viewDir);
+
+              expect(viewBlocked).toBe(blocked);
+            }
+          }
+        }
+      }
+    }
   });
 });
