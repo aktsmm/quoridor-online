@@ -487,6 +487,35 @@
   color: var(--text);
 }
 
+/* Carries the seat colour so the read-out and the board agree at a glance. */
+.readout__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 6px 4px;
+  border: 1.5px solid transparent;
+  border-radius: 999px;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    padding 0.12s ease;
+}
+
+.readout__pill--pawn,
+.readout__pill--wall {
+  padding: 6px 14px;
+  background: color-mix(in srgb, var(--seat-color) 14%, transparent);
+  border-color: color-mix(in srgb, var(--seat-color) 45%, transparent);
+}
+
+.readout__icon {
+  color: var(--seat-color);
+  font-size: 15px;
+  line-height: 1;
+  flex: none;
+}
+
 .turn-bar__dot {
   width: 14px;
   height: 14px;

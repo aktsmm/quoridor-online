@@ -29,7 +29,7 @@ import {
   posId,
   rectStyle,
   resolveBoardTarget,
-  resolveTouchRelease,
+  resolveRelease,
   sameTarget,
   squareRect,
   STEP_PCT,
@@ -262,20 +262,22 @@ export function Board({
           draggingRef.current = false;
           const point = pointOf(event);
           const gesture = point ? updateGesture(event) : null;
-          const target = gesture?.cancelled
-            ? null
-            : event.pointerType === 'mouse'
-            ? track(event)
-            : point && gesture
-              ? resolveTouchRelease(point, {
+          const mouse = event.pointerType === 'mouse';
+          const target =
+            gesture?.cancelled || !point || !gesture
+              ? null
+              : resolveRelease(point, {
                   targets: viewTargets,
                   walls: viewWalls,
                   previous: previewRef.current,
                   tapPoint: gesture.start,
                   movementPct: gesture.maxDistance,
-                  elapsedMs: Math.max(0, event.timeStamp - gesture.startedAt),
-                })
-              : null;
+                  // "Hold to place a wall" is a touch affordance; a mouse has
+                  // already shown its intent by hovering, and a slow click must
+                  // not turn into a different move.
+                  elapsedMs: mouse ? 0 : Math.max(0, event.timeStamp - gesture.startedAt),
+                  allowWallOnTap: mouse,
+                });
           gestureRef.current = null;
           commit(target);
         },
@@ -298,11 +300,22 @@ export function Board({
         ? wallToView(hovered)
         : null;
   const previewPawn = smart && preview?.kind === 'pawn' ? preview.pos : null;
+  // Drives the whole-board styling: while one of the two is about to happen,
+  // the other visibly steps aside instead of sitting there looking equally live.
+  const intent = !smart
+    ? null
+    : preview?.kind === 'pawn'
+      ? 'board--intent-pawn'
+      : preview?.kind === 'wall'
+        ? `board--intent-wall board--intent-wall-${preview.wall.o}`
+        : null;
+  const moverPos = mover ? toView(mover.pos) : null;
+  const trail = previewPawn && moverPos ? trailStyle(moverPos, previewPawn) : null;
   const ruler = rulerLabels(turn);
 
   return (
     <div className="board-frame">
-      <div className="board">
+      <div className={`board${intent ? ` ${intent}` : ''}`}>
         <div className="board__layer board__layer--walls">
           {keyboardWalls.map((wall) => {
             const view = wallToView(wall);
@@ -407,6 +420,28 @@ export function Board({
         </div>
 
         <div className="board__layer board__layer--pawns">
+          {trail && (
+            <div
+              className="move-trail"
+              style={{ ...trail, ['--seat-color' as string]: turnColor }}
+              aria-hidden="true"
+            />
+          )}
+
+          {previewPawn && (
+            <div
+              className="pawn pawn--ghost"
+              style={{
+                width: `${CELL_PCT * 0.74}%`,
+                height: `${CELL_PCT * 0.74}%`,
+                left: `${squareRect(previewPawn).left + CELL_PCT * 0.13}%`,
+                top: `${squareRect(previewPawn).top + CELL_PCT * 0.13}%`,
+                ['--seat-color' as string]: turnColor,
+              }}
+              aria-hidden="true"
+            />
+          )}
+
           <AnimatePresence initial={false}>
             {game.players.map((player, index) => {
               // Finishing or giving up takes your pawn off the board.
@@ -478,6 +513,25 @@ function toBoard(target: BoardTarget, back: QuarterTurns): BoardTarget {
   return target.kind === 'pawn'
     ? { kind: 'pawn', pos: rotatePos(target.pos, back) }
     : { kind: 'wall', wall: rotateWall(target.wall, back) };
+}
+
+/**
+ * A line from the pawn to where it would land, so "this is a move" reads at a
+ * glance. The board is square, so a percentage is the same length on both axes
+ * and the angle can be taken straight from the percentage coordinates.
+ */
+function trailStyle(from: Pos, to: Pos): React.CSSProperties {
+  const a = squareRect(from);
+  const b = squareRect(to);
+  const half = CELL_PCT / 2;
+  const dx = b.left - a.left;
+  const dy = b.top - a.top;
+  return {
+    left: `${a.left + half}%`,
+    top: `${a.top + half}%`,
+    width: `${Math.hypot(dx, dy)}%`,
+    transform: `rotate(${(Math.atan2(dy, dx) * 180) / Math.PI}deg)`,
+  };
 }
 
 /**

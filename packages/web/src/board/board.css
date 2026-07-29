@@ -55,15 +55,59 @@
 
 .board__layer--live {
   pointer-events: auto;
-  cursor: pointer;
+  cursor: default;
   touch-action: pinch-zoom;
   user-select: none;
   -webkit-touch-callout: none;
 }
 
+/*
+ * The cursor answers "move or wall?" before the click, and the wall cursors
+ * match the orientation, so the answer is unambiguous on a desktop.
+ */
+.board--intent-pawn .board__layer--live {
+  cursor: pointer;
+}
+
+.board--intent-wall-h .board__layer--live {
+  cursor: row-resize;
+}
+
+.board--intent-wall-v .board__layer--live {
+  cursor: col-resize;
+}
+
+.board:not([class*='board--intent']) .board__layer--live {
+  cursor: default;
+}
+
+/* Bigger, bolder, and lifted above its neighbours. */
 .square--preview {
-  box-shadow: inset 0 0 0 3px var(--seat-color);
-  background: color-mix(in srgb, var(--seat-color) 38%, transparent);
+  box-shadow:
+    inset 0 0 0 4px var(--seat-color),
+    0 4px 14px color-mix(in srgb, var(--seat-color) 35%, transparent);
+  background: color-mix(in srgb, var(--seat-color) 48%, transparent);
+  transform: scale(1.06);
+  z-index: 1;
+}
+
+/* The ghost pawn says what lands there, so the pulsing dot is just noise. */
+.square--preview::after {
+  opacity: 0;
+}
+
+/* While a wall is armed the move targets step back so they cannot be misread. */
+.board--intent-wall .square--target {
+  opacity: 0.28;
+}
+
+.board--intent-wall .square--target::after {
+  animation: none;
+}
+
+/* Likewise the alternatives fade once one destination is picked out. */
+.board--intent-pawn .square--target:not(.square--preview) {
+  opacity: 0.4;
 }
 
 .wall-hit--inert {
@@ -74,7 +118,10 @@
   position: absolute;
   border-radius: 22%;
   background: var(--board-cell);
-  transition: background 0.2s var(--ease-standard);
+  transition:
+    background 0.2s var(--ease-standard),
+    opacity 0.14s var(--ease-standard),
+    transform 0.14s var(--ease-standard);
 }
 
 .square--goal {
@@ -163,6 +210,44 @@
   animation: you-spin 9s linear infinite;
 }
 
+/*
+ * Where the pawn would land. Deliberately the same disc as the real pawn so the
+ * eye reads "this piece, over there" rather than "some other marker".
+ */
+.pawn--ghost {
+  background: color-mix(in srgb, var(--seat-color) 55%, transparent);
+  border: 2px dashed color-mix(in srgb, var(--seat-color) 85%, transparent);
+  box-shadow: none;
+  animation: ghost-breathe 1.4s var(--ease-standard) infinite;
+}
+
+/* Joins the pawn to that landing square, so a two-square jump still reads. */
+.move-trail {
+  position: absolute;
+  height: 4px;
+  margin-top: -2px;
+  transform-origin: left center;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--seat-color) 25%, transparent),
+    var(--seat-color)
+  );
+  opacity: 0.7;
+}
+
+@keyframes ghost-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(0.9);
+    opacity: 0.6;
+  }
+}
+
 @keyframes you-spin {
   to {
     transform: rotate(360deg);
@@ -182,10 +267,35 @@
     inset 0 1px 1px rgb(255 255 255 / 30%);
 }
 
+/*
+ * A groove is only ~1.8% of the board wide, so a translucent sliver is far too
+ * quiet for a move that cannot be taken back. The proposal is drawn at full
+ * strength with a halo, and pulses so it never reads as already placed.
+ */
 .wall--preview {
-  background: var(--seat-color);
-  opacity: 0.45;
-  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--seat-color) 60%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--seat-color) 70%, white),
+    var(--seat-color)
+  );
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--seat-color) 30%, transparent),
+    0 2px 8px rgb(0 0 0 / 28%);
+  animation: wall-preview-pulse 1.2s var(--ease-standard) infinite;
+}
+
+@keyframes wall-preview-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--seat-color) 30%, transparent),
+      0 2px 8px rgb(0 0 0 / 28%);
+  }
+  50% {
+    box-shadow:
+      0 0 0 7px color-mix(in srgb, var(--seat-color) 14%, transparent),
+      0 2px 8px rgb(0 0 0 / 28%);
+  }
 }
 
 .wall-hit {
@@ -246,5 +356,18 @@
   .board-frame__files,
   .board-frame__ranks {
     display: none;
+  }
+}
+
+/*
+ * The previews still have to be readable without motion, so the pulses stop but
+ * the colour, size and halo that carry the meaning stay.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .square--target::after,
+  .pawn--you::after,
+  .pawn--ghost,
+  .wall--preview {
+    animation: none;
   }
 }

@@ -161,13 +161,18 @@ export function Game({
 
   // Read-out sits above the board so a thumb never covers the one thing that
   // says what is about to happen - walls cannot be taken back.
+  const intent = !smart || !preview.active ? null : preview.target;
   const readout = !smart || !preview.active
     ? ''
-    : preview.target === null
+    : intent === null
       ? t('gameConfirmCancel')
-      : preview.target.kind === 'pawn'
-        ? t('gameConfirmPawn', { square: posToNotation(preview.target.pos) })
-        : t('gameConfirmWall', { wall: wallToNotation(preview.target.wall) });
+      : intent.kind === 'pawn'
+        ? t('gameConfirmPawn', { square: posToNotation(intent.pos) })
+        : t(intent.wall.o === 'h' ? 'gameConfirmWallH' : 'gameConfirmWallV', {
+            wall: wallToNotation(intent.wall),
+            left: String(Math.max(0, wallsLeft - 1)),
+          });
+  const readoutIcon = intent === null ? '' : intent.kind === 'pawn' ? '●' : intent.wall.o === 'h' ? '▬' : '▮';
 
   return (
     <div className="game">
@@ -220,7 +225,17 @@ export function Game({
             aria-live="polite"
             role="status"
           >
-            {readout || (yourTurn ? t('gameSmartHint') : '\u00a0')}
+            <span
+              className={`readout__pill${intent ? ` readout__pill--${intent.kind}` : ''}`}
+              style={{ ['--seat-color' as string]: colors[game.turn] ?? 'var(--blue)' }}
+            >
+              {readoutIcon && (
+                <span className="readout__icon" aria-hidden="true">
+                  {readoutIcon}
+                </span>
+              )}
+              {readout || (yourTurn ? t('gameSmartHint') : '\u00a0')}
+            </span>
           </p>
         )}
 

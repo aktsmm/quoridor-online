@@ -95,18 +95,14 @@ export type BoardTarget =
   | { readonly kind: 'wall'; readonly wall: Wall };
 
 /**
- * How far into a square the "definitely a pawn move" core starts, as a fraction
- * of the square. The outer ring belongs to the grooves around it.
+ * How far from a groove a pointer still counts as aiming at it.
+ *
+ * Deliberately smaller than half a square, so the middle of a square that has
+ * nothing else to offer selects nothing at all rather than some distant wall.
+ * A groove is always approachable from at least one side (see below), so
+ * tightening this costs no reach - it only removes overreach.
  */
-export const PAWN_CORE_INSET = 0.28;
-
-/**
- * How far from a groove a pointer still counts as aiming at it. Deliberately
- * larger than half a square so there is no dead zone in the middle of a square
- * that has nothing else to offer - the preview shows what would happen, and
- * releasing outside the board cancels.
- */
-export const WALL_SNAP_PCT = CELL_PCT * 0.7;
+export const WALL_SNAP_PCT = CELL_PCT * 0.35;
 
 /** How much closer a rival candidate must be before the preview switches. */
 const HYSTERESIS = 1.25;
@@ -143,16 +139,6 @@ function distanceToRect(rect: Rect, x: number, y: number): number {
   return Math.hypot(dx, dy);
 }
 
-function insideCore(rect: Rect, x: number, y: number): boolean {
-  const inset = CELL_PCT * PAWN_CORE_INSET;
-  return (
-    x >= rect.left + inset &&
-    x <= rect.left + rect.width - inset &&
-    y >= rect.top + inset &&
-    y <= rect.top + rect.height - inset
-  );
-}
-
 export function sameTarget(a: BoardTarget | null, b: BoardTarget | null): boolean {
   if (a === null || b === null) return a === b;
   if (a.kind === 'pawn' && b.kind === 'pawn') return a.pos.c === b.pos.c && a.pos.r === b.pos.r;
@@ -174,6 +160,12 @@ export interface ResolveOptions {
 /**
  * Turns a pointer position (percentages inside the board box) into the move it
  * would make, or null when nothing sensible is under it.
+ *
+ * A square you may step to belongs entirely to the pawn move: aiming at it can
+ * never spend a wall, which is the one mistake that cannot be taken back. That
+ * costs no wall reach, because a groove touches four squares and the mover's
+ * own square is never a destination, so at least one side is always free to
+ * grab it from.
  */
 export function resolveBoardTarget(
   point: { x: number; y: number },
@@ -183,9 +175,8 @@ export function resolveBoardTarget(
   const { x, y } = point;
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
 
-  // The middle of a square you may step to is never ambiguous.
   for (const pos of targets) {
-    if (insideCore(squareRect(pos), x, y)) return { kind: 'pawn', pos };
+    if (distanceToRect(squareRect(pos), x, y) === 0) return { kind: 'pawn', pos };
   }
 
   let bestWall: Wall | null = null;
@@ -206,36 +197,39 @@ export function resolveBoardTarget(
     return { kind: 'wall', wall: bestWall };
   }
 
-  // Outer ring of a reachable square, used when walls are exhausted or far.
-  for (const pos of targets) {
-    if (distanceToRect(squareRect(pos), x, y) === 0) return { kind: 'pawn', pos };
-  }
-
   return null;
 }
 
-export interface TouchReleaseOptions extends ResolveOptions {
+export interface ReleaseOptions extends ResolveOptions {
   /** Board point captured on pointerdown, immune to layout movement mid-gesture. */
   tapPoint?: { x: number; y: number };
   /** Furthest distance travelled since pointerdown, as board percentage points. */
   movementPct: number;
   /** Time held before release. */
   elapsedMs: number;
+  /**
+   * Whether a still gesture may commit a wall. A mouse points before it presses,
+   * so a click is already a considered choice; a finger lands blind, so touch
+   * makes walls cost a drag or a hold.
+   */
+  allowWallOnTap?: boolean;
 }
 
 /**
- * Applies the safety policy for touch and pen releases.
+ * Applies the safety policy for a release.
  *
- * A quick stationary tap can only move to a legal square. Walls require a drag
- * or a short hold, so an incidental touch can never spend an irreversible wall.
+ * A gesture that never really moved is read at the point it *started* from, so
+ * the few pixels a hand drifts between press and release can never change what
+ * is committed - in either direction.
  */
-export function resolveTouchRelease(
+export function resolveRelease(
   point: { x: number; y: number },
-  options: TouchReleaseOptions,
+  options: ReleaseOptions,
 ): BoardTarget | null {
-  const { tapPoint, movementPct, elapsedMs, ...resolveOptions } = options;
+  const { tapPoint, movementPct, elapsedMs, allowWallOnTap = false, ...resolveOptions } = options;
   if (movementPct < WALL_DRAG_THRESHOLD_PCT && elapsedMs < WALL_DWELL_MS) {
-    return resolveBoardTarget(tapPoint ?? point, { ...resolveOptions, walls: [] });
+    const still = tapPoint ?? point;
+    return resolveBoardTarget(still, allowWallOnTap ? resolveOptions : { ...resolveOptions, walls: [] });
   }
   return resolveBoardTarget(point, resolveOptions);
 }
