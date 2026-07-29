@@ -196,8 +196,9 @@ describe('three-player seat layout', () => {
         });
       }
     }
-    // Directions are not equally strong, so an uneven mapping would hand the
-    // host a permanent edge over whoever joins last.
+    // Directions may or may not be equally strong -- the evidence is noisy --
+    // so an uneven mapping would risk handing the host a permanent edge over
+    // whoever joins last for no benefit at all.
     for (const perSeat of counts) {
       expect([...perSeat.values()]).toEqual([3, 3, 3, 3]);
     }

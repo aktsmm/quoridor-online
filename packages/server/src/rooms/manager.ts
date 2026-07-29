@@ -166,8 +166,8 @@ export class RoomManager {
     // would draw south in three of the four layouts and the last player to join
     // would draw east just as often. Rotating the survivors leaves the turn
     // order clockwise but hands every seat index each direction equally often,
-    // which matters because directions are not equally strong: 300 hard-vs-hard
-    // games measured west 44% against east 27%.
+    // so no measurable or future difference between directions can attach
+    // itself to join order.
     const offset = Math.floor(this.#random() * seats.length);
     return [...seats.slice(offset), ...seats.slice(0, offset)];
   }
