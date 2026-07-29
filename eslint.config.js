@@ -9,7 +9,6 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/coverage/**',
       '**/*.tsbuildinfo',
-      'spike/**',
       'packages/web/dist/**',
     ],
   },

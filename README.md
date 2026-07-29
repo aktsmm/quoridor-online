@@ -2,6 +2,8 @@
 
 Apple 風デザインのコリドール（Quoridor）オンライン対戦 Web アプリ。
 
+**▶ <https://zealous-rock-0e6198c00.7.azurestaticapps.net/>**
+
 - CPU 対戦（弱 / 普通 / 強）
 - オンライン 2〜4 人対戦（6 桁ルームコードのみ、ID / パスワード不要）
 - 日英 i18n
@@ -54,9 +56,11 @@ az deployment group create -g rg-quoridor-online -f infra/main.bicep \
 ```
 
 Container App は `minReplicas=0` なので、しばらく誰も遊んでいないと
-コールドスタートに 20〜30 秒かかる。フロントは読み込み時に `/health` を
-叩いて先に起こし、その間は接続状態を UI に出す。
+コールドスタートが起きる。実測で約 35 秒（うち約 27 秒が ACA のプロビジョニングと
+イメージ pull）。フロントは読み込み時に `/health` を叩いて先に起こし、
+その間は接続状態を UI に出す。
 
 ## Status
 
-🚧 開発中
+稼働中。Web は Static Web Apps（Free）、ゲームサーバーは Container Apps
+（`minReplicas=0` / `maxReplicas=1`、0.25 vCPU / 0.5 GiB）。
