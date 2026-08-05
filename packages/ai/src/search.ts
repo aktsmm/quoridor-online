@@ -1,6 +1,6 @@
 import type { Move } from '@quoridor/engine';
 import { WIN_SCORE, evaluate } from './evaluate.js';
-import { generateMoves, opponentsOf, scoreMove } from './static.js';
+import { generateMoves, TIE_BAND, opponentsOf, scoreMove } from './static.js';
 import { PathTracer } from './paths.js';
 import type { SearchPosition} from './position.js';
 import { pawnMove } from './position.js';
@@ -94,20 +94,29 @@ export function chooseSearchMove(
   const wallBudget = options.rootWallCandidates ?? 14;
   let wallsKept = 0;
   const shortlist: Move[] = [];
+  let headCount = 0;
+  const cutoff = scored[0]!.score - TIE_BAND;
   for (const entry of scored) {
     if (entry.move.type === 'wall') {
       if (wallsKept >= wallBudget) continue;
       wallsKept += 1;
     }
+    if (entry.score >= cutoff) headCount += 1;
     shortlist.push(entry.move);
   }
 
+  // Alpha-beta keeps the first move it finds when several score the same, so a
+  // fixed root order makes every mirror game identical. Shuffling only the
+  // moves the static evaluation cannot separate leaves the ordering just as
+  // strong - the best-scoring block still goes first - while letting ties fall
+  // differently from game to game. Reordering the root cannot change the value
+  // the search returns, only which of the equal-valued moves is reported.
+  shuffleHead(shortlist, headCount, options.rng);
+
   // Depth 0 answer: the best static move, i.e. exactly what the one-ply engine
   // would do. Even a search that runs out of time immediately returns that.
-  const topScore = scored[0]!.score;
-  const topTies = scored.filter((entry) => entry.score === topScore);
-  let best = topTies[randomInt(options.rng, topTies.length)]!.move;
-  let bestScore = topScore;
+  let best = shortlist[0]!;
+  let bestScore = scored[0]!.score;
   let completed = 0;
 
   const search = (depth: number, ply: number, alphaIn: number, betaIn: number): number => {
@@ -236,6 +245,20 @@ function orderMoves(moves: Move[], hashMove: Move | null): void {
 function rank(move: Move, hashMove: Move | null): number {
   if (hashMove !== null && sameMove(move, hashMove)) return 0;
   return move.type === 'pawn' ? 1 : 2;
+}
+
+/**
+ * Fisher-Yates over the first `count` entries only. Used to scramble the block
+ * of root moves the static evaluation rates as equivalent, so alpha-beta's
+ * first-wins tie rule stops resolving the same way in every game.
+ */
+function shuffleHead(moves: Move[], count: number, rng: () => number): void {
+  for (let i = Math.min(count, moves.length) - 1; i > 0; i -= 1) {
+    const j = randomInt(rng, i + 1);
+    const tmp = moves[i]!;
+    moves[i] = moves[j]!;
+    moves[j] = tmp;
+  }
 }
 
 function sameMove(a: Move, b: Move): boolean {

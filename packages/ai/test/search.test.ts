@@ -15,13 +15,16 @@ import {
 import {
   PathTracer,
   SearchPosition,
+  TIE_BAND,
   chooseMove,
   chooseSearchMove,
   chooseStaticMove,
   evaluate,
+  generateMoves,
   makeRng,
   pathWallCandidates,
   scoreMove,
+  scoreMoves,
   wallsBlockingStep,
   type AiLevel,
 } from '../src/index.js';
@@ -278,11 +281,12 @@ describe('easy AI (one ply)', () => {
     }
   });
 
-  it('races rather than trading a tempo for a one-square block', () => {
-    // Specified behaviour, not an oversight: `easy` is a single ply of
-    // `min(opponent distance) - my distance`, in which a wall worth one square
-    // exactly cancels the move it costs. Only a search sees that racing here
-    // loses on the spot - that difference is most of the gap between the levels.
+  it('splits its choice between racing and a block worth exactly one square', () => {
+    // `easy` is a single ply of `min(opponent distance) - my distance`, in which
+    // a wall worth one square exactly cancels the move it costs, so the two
+    // plans are genuinely equal and the level picks between them at random.
+    // Only a search sees that racing here loses on the spot - that difference
+    // is most of the gap between the levels.
     const base = createGame({ playerCount: 2 });
     const state: GameState = {
       ...base,
@@ -291,9 +295,41 @@ describe('easy AI (one ply)', () => {
         { ...base.players[1]!, pos: { c: 4, r: 1 } },
       ],
     };
-    expect(chooseMove({ state, level: 'easy', seed: 11 }).move.type).toBe('pawn');
+    const kinds = new Set<string>();
+    for (let seed = 0; seed < 40; seed += 1) {
+      kinds.add(chooseMove({ state, level: 'easy', seed }).move.type);
+    }
+    expect(kinds).toEqual(new Set(['pawn', 'wall']));
     expect(chooseMove({ state, level: 'hard', seed: 11, timeBudgetMs: 300 }).move.type).toBe('wall');
   }, 30_000);
+
+  it('never gives up a whole square to the randomness', () => {
+    // The tie band is one point wide and a square is worth ten, so whatever the
+    // seed, the chosen move must score within a point of the best available.
+    const base = createGame({ playerCount: 2 });
+    const state: GameState = {
+      ...base,
+      players: [
+        { ...base.players[0]!, pos: { c: 0, r: 4 } },
+        { ...base.players[1]!, pos: { c: 4, r: 1 } },
+      ],
+    };
+    const position = SearchPosition.from(state);
+    const scored = scoreMoves(
+      position,
+      0,
+      generateMoves(position, 0, [1], new PathTracer(), 12, 64),
+    );
+    const best = Math.max(...scored.map((entry) => entry.score));
+
+    for (let seed = 0; seed < 40; seed += 1) {
+      const chosen = chooseMove({ state, level: 'easy', seed }).move;
+      const key = JSON.stringify(chosen);
+      const match = scored.find((entry) => JSON.stringify(entry.move) === key);
+      expect(match).toBeDefined();
+      expect(match!.score).toBeGreaterThanOrEqual(best - TIE_BAND);
+    }
+  });
 
   it('never wastes a wall that gains nothing', () => {
     // A straight race with the opponent far behind: any wall on their route is
