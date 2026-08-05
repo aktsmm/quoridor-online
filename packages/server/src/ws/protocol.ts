@@ -1,11 +1,20 @@
 import type { GameState, Move, PlayerCount, SeatDirection } from '@quoridor/engine';
 import type { AiLevel } from '@quoridor/ai';
 import type { RoomErrorCode } from '../rooms/manager.js';
-import type { RoomRecord, RoomStatus, SeatConnection } from '../rooms/record.js';
+import { nextFirstTurn, type RoomRecord, type RoomStatus, type SeatConnection } from '../rooms/record.js';
 
 /** Client -> server. Every message carries an optional correlation id. */
 export type ClientMessage =
-  | { type: 'room.create'; rid?: number; playerCount: PlayerCount; aiLevel: AiLevel; fillWithCpu: boolean; name: string }
+  | {
+      type: 'room.create';
+      rid?: number;
+      playerCount: PlayerCount;
+      aiLevel: AiLevel;
+      fillWithCpu: boolean;
+      name: string;
+      /** 1-based position in the move order for the host; null means random. */
+      hostPosition?: number | null;
+    }
   | { type: 'room.join'; rid?: number; code: string; name: string }
   | { type: 'room.watch'; rid?: number; code: string }
   | { type: 'room.reconnect'; rid?: number; code: string; playerToken: string; lastGameVersion?: number }
@@ -17,7 +26,7 @@ export type ClientMessage =
 
 /** Server -> client. */
 export type ServerMessage =
-  | { type: 'hello'; protocolVersion: number; serverTime: number }
+  | { type: 'hello'; protocolVersion: number; serverTime: number; features: readonly string[] }
   | { type: 'joined'; rid?: number; roomId: string; code: string; seatIndex: number; playerToken: string }
   | { type: 'watching'; rid?: number; roomId: string; code: string }
   | { type: 'room.state'; rid?: number; room: RoomView }
@@ -29,6 +38,24 @@ export type ServerMessage =
   | { type: 'pong'; rid?: number; serverTime: number };
 
 export const PROTOCOL_VERSION = 3;
+
+/**
+ * Additive capabilities, advertised in `hello` and on `/health`.
+ *
+ * The client compares `protocolVersion` for exact equality, so bumping it is a
+ * hard cut: every open tab and every not-yet-redeployed bundle stops working.
+ * That is the right behaviour for a breaking change and the wrong one for a
+ * new optional field, because the front end and the server are deployed by
+ * separate workflows and either can land first.
+ *
+ * Features are the additive channel instead. A client only sends a new field
+ * once it has seen the matching capability, so a new bundle talking to an old
+ * server simply hides the feature rather than having its frames rejected by
+ * that server's `additionalProperties: false`.
+ */
+export const FEATURE_FIRST_TURN = 'first-turn';
+
+export const SERVER_FEATURES: readonly string[] = [FEATURE_FIRST_TURN];
 
 /** Public projection of a room. Deliberately free of any secret material. */
 export interface RoomView {
@@ -43,6 +70,13 @@ export interface RoomView {
   seats: SeatView[];
   game: GameState | null;
   moveLog: string[];
+  /**
+   * Seat that opens the next game, 0-based.
+   *
+   * Before the first game there is no `game` to read it from, so the lobby
+   * would otherwise have nothing to show each seat's turn position from.
+   */
+  nextFirstTurn: number;
   /** How many seat-less watchers are currently attached. */
   spectators: number;
 }
@@ -81,6 +115,7 @@ export function toRoomView(record: RoomRecord, spectators = 0): RoomView {
     })),
     game: record.game,
     moveLog: record.moveLog,
+    nextFirstTurn: nextFirstTurn(record),
     spectators,
   };
 }

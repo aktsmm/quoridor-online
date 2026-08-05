@@ -1,8 +1,10 @@
 import type { Move, PlayerCount } from '@quoridor/engine';
 import { Connection, type ConnectionStatus } from '../net/connection.js';
 import {
+  FEATURE_FIRST_TURN,
   PROTOCOL_VERSION,
   type AiLevel,
+  type ClientMessage,
   type ErrorCode,
   type RoomView,
   type ServerMessage,
@@ -36,6 +38,14 @@ export interface SessionSnapshot {
   readonly optimistic: boolean;
   /** Somebody just left the board; shown briefly while the game carries on. */
   readonly notice: FinishNotice | null;
+  /**
+   * True once the connected server has advertised the turn-order capability.
+   *
+   * Drives whether the setup form offers the choice at all: against a server
+   * that has not been rolled out yet the option is hidden rather than shown
+   * and quietly ignored.
+   */
+  readonly canChooseFirstTurn: boolean;
 }
 
 export interface CreateOptions {
@@ -43,8 +53,28 @@ export interface CreateOptions {
   aiLevel: AiLevel;
   fillWithCpu: boolean;
   name: string;
+  /**
+   * Where the host wants to be in the move order, 1-based, or null for a
+   * random draw. Dropped entirely if the server has not advertised support.
+   */
+  hostPosition?: number | null;
   /** Solo-vs-CPU: skip the lobby and deal straight away. */
   autoStart?: boolean;
+}
+
+/** The subset of `Connection` the store drives; a seam for tests. */
+export interface ConnectionLike {
+  connect(): void;
+  close(): void;
+  retryNow(): void;
+  nextRid(): number;
+  send(message: ClientMessage): boolean;
+}
+
+export interface ConnectionEventsLike {
+  onStatus: (status: ConnectionStatus, retryAt: number | null) => void;
+  onMessage: (message: ServerMessage) => void;
+  onOpen: (attempt: number) => void;
 }
 
 type Listener = () => void;
@@ -60,6 +90,7 @@ const EMPTY: SessionSnapshot = {
   busy: false,
   optimistic: false,
   notice: null,
+  canChooseFirstTurn: false,
 };
 
 /**
@@ -71,22 +102,32 @@ const EMPTY: SessionSnapshot = {
 export class SessionStore {
   #snapshot: SessionSnapshot = EMPTY;
   #listeners = new Set<Listener>();
-  #connection: Connection;
+  #connection: ConnectionLike;
   #credentials: Credentials | null = loadCredentials();
   /** Last state the server actually confirmed; the rollback target. */
   #serverRoom: RoomView | null = null;
   #started = false;
   /** Set by a solo-vs-CPU create so the lobby is dealt without a tap. */
   #autoStart = false;
+  /** Capabilities of the currently connected server, from its `hello`. */
+  #features: readonly string[] = [];
 
-  constructor() {
-    this.#connection = new Connection({
+  constructor(makeConnection?: (events: ConnectionEventsLike) => ConnectionLike) {
+    const events: ConnectionEventsLike = {
       onStatus: (status, retryAt) => {
-        this.#patch({ status, retryAt, ...(status === 'open' ? {} : { greeted: false }) });
+        // A new socket may land on a different replica - or a different build
+        // of the server - so anything it told us last time is stale.
+        if (status !== 'open') this.#features = [];
+        this.#patch({
+          status,
+          retryAt,
+          ...(status === 'open' ? {} : { greeted: false, canChooseFirstTurn: false }),
+        });
       },
       onMessage: (message) => this.#handle(message),
       onOpen: () => this.#resume(),
-    });
+    };
+    this.#connection = makeConnection ? makeConnection(events) : new Connection(events);
   }
 
   subscribe = (listener: Listener): (() => void) => {
@@ -126,6 +167,14 @@ export class SessionStore {
   createRoom(options: CreateOptions): void {
     this.#autoStart = options.autoStart === true;
     this.#patch({ busy: true, error: null });
+    const hostPosition = options.hostPosition ?? null;
+    // An older server validates with `additionalProperties: false`, so sending
+    // this blind would get the whole frame rejected rather than the field
+    // ignored. Omit it unless the capability was advertised.
+    const wanted =
+      hostPosition !== null && this.#features.includes(FEATURE_FIRST_TURN)
+        ? { hostPosition }
+        : {};
     this.#send({
       type: 'room.create',
       rid: this.#connection.nextRid(),
@@ -133,6 +182,7 @@ export class SessionStore {
       aiLevel: options.aiLevel,
       fillWithCpu: options.fillWithCpu,
       name: options.name,
+      ...wanted,
     });
   }
 
@@ -236,7 +286,12 @@ export class SessionStore {
           });
           return;
         }
-        this.#patch({ greeted: true });
+        // A server built before capabilities existed simply omits the list.
+        this.#features = Array.isArray(message.features) ? message.features : [];
+        this.#patch({
+          greeted: true,
+          canChooseFirstTurn: this.#features.includes(FEATURE_FIRST_TURN),
+        });
         return;
 
       case 'joined': {
@@ -325,7 +380,7 @@ export class SessionStore {
     this.#patch({ room: null, seatIndex: null, role: 'player', optimistic: false, busy: false, error: null, notice: null });
   }
 
-  #send(message: Parameters<Connection['send']>[0]): boolean {
+  #send(message: ClientMessage): boolean {
     const sent = this.#connection.send(message);
     if (!sent) this.#patch({ busy: false });
     return sent;

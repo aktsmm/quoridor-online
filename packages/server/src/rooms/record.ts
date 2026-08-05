@@ -1,7 +1,13 @@
 import type { AiLevel } from '@quoridor/ai';
 import type { GameState, PlayerCount, SeatDirection } from '@quoridor/engine';
 
-/** Bumped whenever the persisted shape changes; older records are discarded. */
+/**
+ * Bumped whenever the persisted shape changes; older records are discarded.
+ *
+ * "Discarded" is literal - `RoomManager` deletes a record it cannot read - so
+ * a bump wipes every live lobby and game the moment they are next touched.
+ * Additive fields must therefore be optional and defaulted on read instead.
+ */
 export const ROOM_SCHEMA_VERSION = 2;
 
 export type RoomStatus = 'lobby' | 'playing' | 'finished';
@@ -50,6 +56,19 @@ export interface RoomRecord {
   fillWithCpu: boolean;
   /** Seat index of the host, or null once every human has left for good. */
   hostSeat: number | null;
+  /**
+   * Seat that moves first in this room's *first* game, 0-based.
+   *
+   * Resolved once, when the room is created, from the position the host asked
+   * for (or drawn at random). It is never recomputed: the host may be handed
+   * over to another seat later, and re-applying a "host goes Nth" rule to the
+   * new host would silently reorder the table. Fixing it at creation also
+   * means nobody can change the order after people have joined.
+   *
+   * Optional because schema v2 records written before turn selection existed
+   * do not carry it; `nextFirstTurn` defaults them to seat 0.
+   */
+  initialFirstTurn?: number;
   seats: SeatRecord[];
   game: GameState | null;
   /** Moves in standard notation, for the sidebar. */
@@ -64,6 +83,48 @@ export interface StoredRoom {
 
 export function humanSeats(record: RoomRecord): SeatRecord[] {
   return record.seats.filter((s) => s.kind === 'human');
+}
+
+/**
+ * Seat that will move first in the next game this room deals, 0-based.
+ *
+ * Rematches step the opening seat on by one so the first-mover advantage is
+ * passed around instead of staying with whoever hosts. The step is taken from
+ * the game just played rather than from a counter, so the answer is entirely
+ * recomputable from the persisted record - a replica restart, a revision swap
+ * or a lost in-memory tally cannot desynchronise it.
+ *
+ * This also applies to rooms that asked for a random opening: the draw settles
+ * the first game only, and every game after it rotates. Re-drawing each time
+ * would let the same seat open twice in a row, which is exactly what the
+ * rotation exists to prevent.
+ *
+ * The rotation follows *seats*, not people. If somebody leaves between games
+ * and a newcomer takes the empty seat, the newcomer inherits whatever turn
+ * position that seat was next in line for. It keeps the seats fair rather than
+ * the individuals, which is the only thing a room can promise when its roster
+ * changes underneath it.
+ */
+export function nextFirstTurn(record: RoomRecord): number {
+  if (record.game) return (record.game.firstTurn + 1) % record.playerCount;
+  return normaliseSeatIndex(record.initialFirstTurn, record.playerCount);
+}
+
+/** Anything a v2 record (or a corrupt one) leaves out falls back to seat 0. */
+function normaliseSeatIndex(value: number | undefined, playerCount: number): number {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return 0;
+  if (value < 0 || value >= playerCount) return 0;
+  return value;
+}
+
+/**
+ * Where a seat sits in the move order, 1-based, given the seat that opens.
+ *
+ * Seats are dealt clockwise from the opener, which is exactly the order
+ * `GameState.turn` advances in.
+ */
+export function turnPosition(seatIndex: number, firstTurn: number, playerCount: number): number {
+  return (((seatIndex - firstTurn) % playerCount) + playerCount) % playerCount + 1;
 }
 
 export function hasLiveHuman(record: RoomRecord): boolean {

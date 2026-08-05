@@ -12,7 +12,7 @@ import { DEFAULT_LIMITS, type ServerConfig } from '../src/config.js';
 import { MemoryRoomStore } from '../src/rooms/store.js';
 import { InlineAiPool } from '../src/ai/pool.js';
 import { CLOSE_POLICY, CLOSE_SUPERSEDED } from '../src/ws/hub.js';
-import { PROTOCOL_VERSION, type RoomView, type ServerMessage } from '../src/ws/protocol.js';
+import { PROTOCOL_VERSION, FEATURE_FIRST_TURN, type RoomView, type ServerMessage } from '../src/ws/protocol.js';
 import { TestClient } from './helpers/client.js';
 
 function makeConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
@@ -264,8 +264,49 @@ describe('websocket vertical slice', () => {
     const health = await response.json();
     expect(health.status).toBe('ok');
     expect(health.protocolVersion).toBe(PROTOCOL_VERSION);
+    // The web deploy gate reads this to make sure the server rolled out first.
+    expect(health.features).toContain(FEATURE_FIRST_TURN);
     expect(app.hub.connectionCount).toBe(0);
   });
+
+  it('advertises its optional features in the greeting', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(store);
+    const client = await TestClient.connect(url);
+    clients.push(client);
+
+    const hello = await client.nextOfType('hello');
+    // The protocol version stays put so old tabs keep working; anything added
+    // since is announced here instead.
+    expect(hello.protocolVersion).toBe(PROTOCOL_VERSION);
+    expect(hello.features).toContain(FEATURE_FIRST_TURN);
+  });
+
+  it('lets the CPU open when the human asks to go second', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(store);
+
+    const host = await connect(url);
+    host.send({
+      type: 'room.create',
+      playerCount: 2,
+      aiLevel: 'easy',
+      fillWithCpu: true,
+      name: 'Host',
+      hostPosition: 2,
+    });
+    await host.nextOfType('joined');
+    const lobby = roomOf(await host.nextOfType('room.state'));
+    expect(lobby.nextFirstTurn).toBe(1);
+
+    host.send({ type: 'room.start' });
+    // Nothing else prods the server here: the CPU has to notice it is on the
+    // move the instant the game starts, or this waits forever.
+    const state = await myTurn(host);
+    expect(state.game!.firstTurn).toBe(1);
+    expect(state.game!.ply).toBe(1);
+    expect(state.moveLog).toHaveLength(1);
+  }, 20_000);
 
   it('reports games in progress so a deploy can wait for them', async () => {
     const store = new MemoryRoomStore();
@@ -546,6 +587,39 @@ describe('playing again', () => {
     // Same room, same code: nobody had to go back to the home screen.
     expect(next.code).toBe(joined.code);
     expect(next.seats.map((s) => s.name)).toEqual(over.seats.map((s) => s.name));
+  }, 30_000);
+
+  it('moves the opening seat on by one for the next game', async () => {
+    const store = new MemoryRoomStore();
+    const { url } = await startApp(store);
+
+    const host = await connect(url);
+    host.send({
+      type: 'room.create',
+      playerCount: 2,
+      aiLevel: 'easy',
+      fillWithCpu: true,
+      name: 'Host',
+      hostPosition: 1,
+    });
+    await host.nextOfType('joined');
+    await host.nextOfType('room.state');
+    host.send({ type: 'room.start' });
+
+    const over = roomOf(await raceToTheEnd(host));
+    expect(over.game!.firstTurn).toBe(0);
+    // Between games the room already knows who opens next, so the lobby can
+    // show it before anyone presses anything.
+    expect(over.nextFirstTurn).toBe(1);
+
+    host.send({ type: 'room.rematch' });
+    const next = roomOf(
+      await host.next(
+        (m) =>
+          m.type === 'game.state' && m.room.status === 'playing' && m.room.gameVersion > over.gameVersion,
+      ),
+    );
+    expect(next.game!.firstTurn).toBe(1);
   }, 30_000);
 
   it('lets a new player take a seat that was left after the game', async () => {

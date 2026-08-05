@@ -1,8 +1,8 @@
 import { isActive, type GameState } from '@quoridor/engine';
 import { useState } from 'react';
 import { useI18n, type MessageKey } from '../i18n/index.js';
-import type { RoomView } from '../net/protocol.js';
-import { displayName, openSeatCount, seatLabelKey } from './shared.js';
+import { turnPosition, type RoomView } from '../net/protocol.js';
+import { displayName, openSeatCount, seatLabelKey, turnOrderLabel } from './shared.js';
 
 interface Props {
   room: RoomView;
@@ -62,7 +62,7 @@ export function Lobby({ room, youIndex, spectating, busy, onStart, onLeave }: Pr
         </div>
       </section>
 
-      <Roster room={room} youIndex={youIndex} />
+      <Roster room={room} youIndex={youIndex} showTurnOrder />
 
       {isHost ? (
         <button
@@ -89,12 +89,23 @@ export function Lobby({ room, youIndex, spectating, busy, onStart, onLeave }: Pr
 export function Roster({
   room,
   youIndex,
+  showTurnOrder = false,
 }: {
   room: RoomView;
   youIndex: number | null;
+  /**
+   * Adds each seat's place in the move order. The lobby needs it because
+   * before the first deal there is no board to read the order off; during a
+   * game the board already shows it.
+   */
+  showTurnOrder?: boolean;
 }): React.JSX.Element {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const game = room.game;
+  // Once a game exists it is the authority; before that the room says which
+  // seat opens. A server without the capability sends neither, and the order
+  // is simply left off.
+  const firstTurn = game ? game.firstTurn : room.nextFirstTurn;
   return (
     <ul className="roster" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
       {room.seats.map((seat) => {
@@ -120,6 +131,11 @@ export function Roster({
               </span>
             )}
             <span className="roster__meta">
+              {showTurnOrder && firstTurn !== undefined && (
+                <span className="tag">
+                  {turnOrderLabel(turnPosition(seat.index, firstTurn, room.playerCount), lang)}
+                </span>
+              )}
               <span className="tag">{t(seatLabelKey(seat.seat))}</span>
               {seat.index === youIndex && <span className="tag tag--you">{t('lobbyYou')}</span>}
               {room.hostSeat === seat.index && <span className="tag tag--host">{t('lobbyHost')}</span>}

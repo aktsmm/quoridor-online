@@ -47,6 +47,7 @@ function Shell(): React.JSX.Element {
       aiLevel: intent.aiLevel,
       fillWithCpu: intent.kind === 'cpu' ? true : intent.fillWithCpu,
       name: intent.name,
+      hostPosition: intent.hostPosition,
       autoStart: intent.kind === 'cpu',
     });
   };
@@ -79,6 +80,7 @@ function Shell(): React.JSX.Element {
             <Home
               busy={session.busy}
               canAct={connected}
+              canChooseFirstTurn={session.canChooseFirstTurn}
               onSubmit={submit}
               onShowRules={() => setRulesOpen(true)}
             />

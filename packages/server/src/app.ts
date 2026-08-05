@@ -7,7 +7,7 @@ import { Hub, CLOSE_POLICY, type HubLogger } from './ws/hub.js';
 import { RoomManager } from './rooms/manager.js';
 import type { RoomStore } from './rooms/store.js';
 import type { AiPool } from './ai/pool.js';
-import { PROTOCOL_VERSION } from './ws/protocol.js';
+import { PROTOCOL_VERSION, SERVER_FEATURES } from './ws/protocol.js';
 
 export interface AppParts {
   config: ServerConfig;
@@ -50,12 +50,17 @@ export function createApp(parts: AppParts): App {
 
   // Hit by the front end on page load: it wakes a scaled-to-zero replica up
   // before the player has finished reading the lobby.
+  //
+  // `features` is also what the web deploy workflow gates on: the front end is
+  // published by a separate workflow, so it has to be able to tell "the server
+  // already understands this" from "the protocol version happens to match".
   fastify.get('/health', () => ({
     status: 'ok',
     uptimeMs: Date.now() - startedAt,
     connections: hub.connectionCount,
     activeGames: hub.activeGameCount,
     protocolVersion: PROTOCOL_VERSION,
+    features: SERVER_FEATURES,
   }));
   fastify.get('/', () => ({ service: 'quoridor-server' }));
 

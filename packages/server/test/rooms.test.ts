@@ -1,8 +1,30 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { legalPawnMoves, CLOCKWISE_SEATS, type SeatDirection } from '@quoridor/engine';
+import {
+  applyMove,
+  distanceToGoal,
+  isActive,
+  legalPawnMoves,
+  CLOCKWISE_SEATS,
+  type GameState,
+  type PlayerCount,
+  type Pos,
+  type SeatDirection,
+} from '@quoridor/engine';
 import { DEFAULT_LIMITS, type ServerConfig } from '../src/config.js';
 import { MemoryRoomStore } from '../src/rooms/store.js';
-import { RoomManager, RoomError, isCpuToMove, seatToMove } from '../src/rooms/manager.js';
+import {
+  RoomManager,
+  RoomError,
+  isCpuToMove,
+  seatToMove,
+  firstTurnForHostPosition,
+} from '../src/rooms/manager.js';
+import {
+  ROOM_SCHEMA_VERSION,
+  turnPosition,
+  type RoomRecord,
+  type StoredRoom,
+} from '../src/rooms/record.js';
 import { hashToken } from '../src/rooms/code.js';
 import { toRoomView } from '../src/ws/protocol.js';
 
@@ -577,3 +599,196 @@ describe('room codes', () => {
     expect(await store.reserveCode('123456', 'b', Date.now() + 60_000)).toBe(false);
   });
 });
+
+describe('turn order', () => {
+  /** Greedy racer: nobody builds walls, so every game finishes quickly. */
+  function racingMove(game: GameState): Pos {
+    const seat = game.turn;
+    let best: Pos | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const to of legalPawnMoves(game)) {
+      const after = applyMove(game, { type: 'pawn', to });
+      // Reaching the goal retires the pawn, and a retired pawn has no distance
+      // left to measure, so treat it as the best possible outcome.
+      const distance = isActive(after, seat) ? distanceToGoal(after, seat) : -1;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = to;
+      }
+    }
+    return best!;
+  }
+
+  async function playToFinish(manager: RoomManager, roomId: string): Promise<StoredRoom> {
+    let stored = (await manager.get(roomId))!;
+    for (let ply = 0; ply < 400 && stored.record.status === 'playing'; ply += 1) {
+      const game = stored.record.game!;
+      stored = await manager.applyMove(roomId, game.turn, stored.record.gameVersion, {
+        type: 'pawn',
+        to: racingMove(game),
+      });
+    }
+    expect(stored.record.status).toBe('finished');
+    return stored;
+  }
+
+  const counts: PlayerCount[] = [2, 3, 4];
+
+  describe('the host picks a position', () => {
+    for (const playerCount of counts) {
+      it(`opens on the seat the host asked for with ${playerCount} players`, async () => {
+        for (let hostPosition = 1; hostPosition <= playerCount; hostPosition += 1) {
+          const { manager } = makeManager();
+          const host = await manager.createRoom({
+            playerCount,
+            aiLevel: 'easy',
+            fillWithCpu: true,
+            name: 'Host',
+            hostPosition,
+          });
+          const roomId = host.stored.record.roomId;
+
+          // Stored 0-based, so the wire value never leaks into the engine.
+          expect(host.stored.record.initialFirstTurn).toBe(
+            firstTurnForHostPosition(0, hostPosition, playerCount),
+          );
+
+          const started = await manager.start(roomId, 0);
+          const firstTurn = started.record.game!.firstTurn;
+          expect(started.record.game!.turn).toBe(firstTurn);
+          // The host holds seat 0, so its place in the order is what was asked.
+          expect(turnPosition(0, firstTurn, playerCount)).toBe(hostPosition);
+        }
+      });
+    }
+
+    it('shows the coming order in the lobby, before any game exists', async () => {
+      const { manager } = makeManager();
+      const host = await manager.createRoom({
+        playerCount: 3,
+        aiLevel: 'easy',
+        fillWithCpu: true,
+        name: 'Host',
+        hostPosition: 3,
+      });
+      const view = toRoomView(host.stored.record);
+      expect(view.game).toBeNull();
+      expect(view.nextFirstTurn).toBe(1);
+      expect(view.seats.map((s) => turnPosition(s.index, view.nextFirstTurn, 3))).toEqual([3, 1, 2]);
+    });
+
+    it('refuses a position that is out of range or not a whole number', async () => {
+      const { manager } = makeManager();
+      for (const hostPosition of [0, -1, 3, 4, 1.5, Number.NaN]) {
+        await expect(
+          manager.createRoom({
+            playerCount: 2,
+            aiLevel: 'easy',
+            fillWithCpu: true,
+            name: 'Host',
+            hostPosition,
+          }),
+        ).rejects.toMatchObject({ code: 'invalid-request' });
+      }
+      // Rejecting before the code is reserved keeps the 6-digit space clean.
+      const grant = await manager.createRoom({
+        playerCount: 2,
+        aiLevel: 'easy',
+        fillWithCpu: true,
+        name: 'Host',
+        hostPosition: 2,
+      });
+      expect(grant.stored.record.code).toMatch(/^\d{6}$/);
+    });
+  });
+
+  describe('rematch rotation', () => {
+    for (const playerCount of counts) {
+      it(`moves the opening seat on by one and comes full circle with ${playerCount} players`, async () => {
+        const { manager } = makeManager();
+        const host = await manager.createRoom({
+          playerCount,
+          aiLevel: 'easy',
+          fillWithCpu: true,
+          name: 'Host',
+          hostPosition: 1,
+        });
+        const roomId = host.stored.record.roomId;
+
+        await manager.start(roomId, 0);
+        const seen: number[] = [(await manager.get(roomId))!.record.game!.firstTurn];
+        await playToFinish(manager, roomId);
+
+        // One lap of the table: the last rematch must land back on the start.
+        for (let round = 1; round <= playerCount; round += 1) {
+          const next = await manager.rematch(roomId, 0);
+          seen.push(next.record.game!.firstTurn);
+          if (round < playerCount) await playToFinish(manager, roomId);
+        }
+
+        const expected = Array.from(
+          { length: playerCount + 1 },
+          (_, i) => (seen[0]! + i) % playerCount,
+        );
+        expect(seen).toEqual(expected);
+        expect(seen.at(-1)).toBe(seen[0]);
+      });
+    }
+
+    it('draws once for an unspecified position and then rotates instead of redrawing', async () => {
+      // A fresh draw each game could hand the same seat the opening move twice
+      // in a row, which is exactly what the rotation exists to prevent.
+      const drawing = new RoomManager({
+        store: new MemoryRoomStore(now),
+        config: makeConfig(),
+        now,
+        random: () => 0.6,
+      });
+
+      const host = await drawing.createRoom({
+        playerCount: 2,
+        aiLevel: 'easy',
+        fillWithCpu: true,
+        name: 'Host',
+      });
+      const roomId = host.stored.record.roomId;
+      expect(host.stored.record.initialFirstTurn).toBe(1);
+
+      await drawing.start(roomId, 0);
+      expect((await drawing.get(roomId))!.record.game!.firstTurn).toBe(1);
+      await playToFinish(drawing, roomId);
+
+      // `random` still returns 0.6, so a redraw would give 1 again.
+      const second = await drawing.rematch(roomId, 0);
+      expect(second.record.game!.firstTurn).toBe(0);
+    });
+  });
+
+  describe('records saved before this feature existed', () => {
+    it('starts and rotates normally without an initialFirstTurn', async () => {
+      const { manager, store } = makeManager();
+      const host = await manager.createRoom({
+        playerCount: 2,
+        aiLevel: 'easy',
+        fillWithCpu: true,
+        name: 'Host',
+      });
+      const roomId = host.stored.record.roomId;
+
+      // Exactly what a v2 record looks like: the field simply is not there.
+      const legacy: RoomRecord = { ...host.stored.record };
+      delete (legacy as { initialFirstTurn?: number }).initialFirstTurn;
+      expect(legacy.schemaVersion).toBe(ROOM_SCHEMA_VERSION);
+      const saved = await store.save(legacy, host.stored.etag);
+      expect(saved).not.toBeNull();
+      expect('initialFirstTurn' in saved!.record).toBe(false);
+
+      const started = await manager.start(roomId, 0);
+      expect(started.record.game!.firstTurn).toBe(0);
+      await playToFinish(manager, roomId);
+      const next = await manager.rematch(roomId, 0);
+      expect(next.record.game!.firstTurn).toBe(1);
+    });
+  });
+});
+

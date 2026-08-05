@@ -16,6 +16,7 @@ import {
   ROOM_SCHEMA_VERSION,
   hasLiveHuman,
   isCpuSeat,
+  nextFirstTurn,
   seatByToken,
   type RoomRecord,
   type SeatRecord,
@@ -51,6 +52,34 @@ export interface CreateRoomInput {
   aiLevel: AiLevel;
   fillWithCpu: boolean;
   name: string;
+  /**
+   * Where the host wants to sit in the move order, 1-based, or null to be
+   * dealt one at random.
+   *
+   * Deliberately *not* called `firstTurn`: this is a position in the order
+   * ("I want to go second"), while the engine's `firstTurn` is a 0-based seat
+   * index ("seat 1 opens"). They coincide only when the host holds seat 0 and
+   * asks to go first, and conflating them silently rotates the table.
+   */
+  hostPosition?: number | null;
+}
+
+/** The seat the room creator always takes. */
+const HOST_SEAT = 0;
+
+/**
+ * Converts "the host is the Nth to move" into the 0-based seat that opens.
+ *
+ * Written for an arbitrary host seat rather than assuming 0, so the intent
+ * stays readable even though rooms only ever resolve this at creation, when
+ * the host is seat 0 by construction.
+ */
+export function firstTurnForHostPosition(
+  hostSeat: number,
+  hostPosition: number,
+  playerCount: number,
+): number {
+  return (((hostSeat - (hostPosition - 1)) % playerCount) + playerCount) % playerCount;
 }
 
 export interface SeatGrant {
@@ -106,6 +135,15 @@ export class RoomManager {
   async createRoom(input: CreateRoomInput): Promise<SeatGrant> {
     if (this.#roomCount >= this.#config.limits.maxRooms) throw new RoomError('capacity');
     if (!isAiLevel(input.aiLevel)) throw new RoomError('invalid-request');
+    // Checked here, before a code is reserved, and again in the JSON schema at
+    // the edge. The schema cannot express "at most `playerCount`" as a plain
+    // bound, and in any case the client is never the authority on this.
+    const hostPosition = input.hostPosition ?? null;
+    if (hostPosition !== null) {
+      if (!Number.isInteger(hostPosition) || hostPosition < 1 || hostPosition > input.playerCount) {
+        throw new RoomError('invalid-request', 'hostPosition out of range');
+      }
+    }
 
     const now = this.#now();
     const roomId = newRoomId();
@@ -126,7 +164,7 @@ export class RoomManager {
       tokenHash: null,
       disconnectedAt: null,
     }));
-    const host = seats[0]!;
+    const host = seats[HOST_SEAT]!;
     host.name = input.name;
     host.connection = 'connected';
     host.tokenHash = hashToken(token);
@@ -144,7 +182,11 @@ export class RoomManager {
       playerCount: input.playerCount,
       aiLevel: input.aiLevel,
       fillWithCpu: input.fillWithCpu,
-      hostSeat: 0,
+      hostSeat: HOST_SEAT,
+      initialFirstTurn:
+        hostPosition === null
+          ? Math.floor(this.#random() * input.playerCount)
+          : firstTurnForHostPosition(HOST_SEAT, hostPosition, input.playerCount),
       seats,
       game: null,
       moveLog: [],
@@ -267,7 +309,9 @@ export class RoomManager {
 
   /**
    * Starts the next game without breaking up the table. Seats, names and
-   * tokens all survive; only the position and the first mover are new.
+   * tokens all survive; only the position is new, and the opening seat steps
+   * on by one so the first-mover advantage rotates rather than sticking with
+   * whoever happens to host.
    */
   async rematch(roomId: string, seatIndex: number): Promise<StoredRoom> {
     const outcome = await this.#mutate(roomId, (record, ctx) => {
@@ -299,10 +343,12 @@ export class RoomManager {
     }
     if (record.seats.some((s) => s.connection === 'empty')) throw new RoomError('not-ready');
 
+    // `nextFirstTurn` reads the game that just finished, so a rematch rotates
+    // the opening seat on by one without anyone having to keep a counter.
     record.game = createGame({
       playerCount: record.playerCount,
       seats: record.seats.map((s) => s.seat),
-      firstTurn: Math.floor(this.#random() * record.playerCount),
+      firstTurn: nextFirstTurn(record),
     });
     record.status = 'playing';
     record.moveLog = [];

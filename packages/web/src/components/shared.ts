@@ -73,3 +73,13 @@ export function ordinal(place: number, lang: Lang): string {
       return `${place}th`;
   }
 }
+
+/**
+ * "1st" / "1 番手" - where a seat sits in the move order.
+ *
+ * Kept apart from `ordinal` because in Japanese finishing 1st ("1 位") and
+ * moving first ("1 番手") are different words for different things.
+ */
+export function turnOrderLabel(position: number, lang: Lang): string {
+  return lang === 'ja' ? `${position} 番手` : ordinal(position, 'en');
+}

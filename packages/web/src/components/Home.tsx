@@ -3,16 +3,30 @@ import { useState } from 'react';
 import { useI18n, type MessageKey } from '../i18n/index.js';
 import type { AiLevel } from '../net/protocol.js';
 import { loadName, saveName } from '../state/storage.js';
+import { turnOrderLabel } from './shared.js';
 
+/**
+ * `hostPosition` is 1-based and says where the host sits in the move order;
+ * `null` asks the server to draw one. It is not a seat index.
+ */
 export type HomeIntent =
-  | { kind: 'cpu'; playerCount: PlayerCount; aiLevel: AiLevel; name: string }
-  | { kind: 'host'; playerCount: PlayerCount; aiLevel: AiLevel; fillWithCpu: boolean; name: string }
+  | { kind: 'cpu'; playerCount: PlayerCount; aiLevel: AiLevel; hostPosition: number | null; name: string }
+  | {
+      kind: 'host';
+      playerCount: PlayerCount;
+      aiLevel: AiLevel;
+      fillWithCpu: boolean;
+      hostPosition: number | null;
+      name: string;
+    }
   | { kind: 'join'; code: string; name: string }
   | { kind: 'watch'; code: string };
 
 interface Props {
   busy: boolean;
   canAct: boolean;
+  /** Hidden entirely when the connected server does not support it. */
+  canChooseFirstTurn: boolean;
   onSubmit: (intent: HomeIntent) => void;
   onShowRules: () => void;
 }
@@ -31,17 +45,25 @@ const COUNT_KEYS: Record<PlayerCount, MessageKey> = {
   4: 'setupPlayers4',
 };
 
-export function Home({ busy, canAct, onSubmit, onShowRules }: Props): React.JSX.Element {
-  const { t } = useI18n();
+export function Home({ busy, canAct, canChooseFirstTurn, onSubmit, onShowRules }: Props): React.JSX.Element {
+  const { t, lang } = useI18n();
   const [view, setView] = useState<View>('menu');
   const [name, setName] = useState(loadName);
   const [playerCount, setPlayerCount] = useState<PlayerCount>(2);
   const [aiLevel, setAiLevel] = useState<AiLevel>('normal');
   const [fillWithCpu, setFillWithCpu] = useState(true);
+  /** 1-based place in the move order; null is "let the server pick". */
+  const [hostPosition, setHostPosition] = useState<number | null>(null);
   const [code, setCode] = useState('');
   const [problem, setProblem] = useState<MessageKey | null>(null);
 
   const trimmedName = name.trim();
+
+  /** Dropping to a smaller table can strand the choice past the last seat. */
+  const changePlayerCount = (next: PlayerCount): void => {
+    setPlayerCount(next);
+    setHostPosition((current) => (current !== null && current > next ? null : current));
+  };
 
   const submit = (intent: HomeIntent): void => {
     if (!trimmedName) {
@@ -197,10 +219,20 @@ export function Home({ busy, canAct, onSubmit, onShowRules }: Props): React.JSX.
           style={{ marginTop: 18 }}
           onSubmit={(event) => {
             event.preventDefault();
+            // Guards the case where the server support went away between
+            // rendering the control and pressing the button.
+            const position = canChooseFirstTurn ? hostPosition : null;
             submit(
               isCpu
-                ? { kind: 'cpu', playerCount, aiLevel, name: trimmedName }
-                : { kind: 'host', playerCount, aiLevel, fillWithCpu, name: trimmedName },
+                ? { kind: 'cpu', playerCount, aiLevel, hostPosition: position, name: trimmedName }
+                : {
+                    kind: 'host',
+                    playerCount,
+                    aiLevel,
+                    fillWithCpu,
+                    hostPosition: position,
+                    name: trimmedName,
+                  },
             );
           }}
         >
@@ -213,7 +245,7 @@ export function Home({ busy, canAct, onSubmit, onShowRules }: Props): React.JSX.
                   type="button"
                   className="segmented__item"
                   aria-pressed={playerCount === value}
-                  onClick={() => setPlayerCount(value)}
+                  onClick={() => changePlayerCount(value)}
                 >
                   {t(COUNT_KEYS[value])}
                 </button>
@@ -221,6 +253,34 @@ export function Home({ busy, canAct, onSubmit, onShowRules }: Props): React.JSX.
             </div>
             {playerCount === 3 && <p className="form__note">{t('setupPlayers3Note')}</p>}
           </div>
+
+          {canChooseFirstTurn && (
+            <div className="form__row">
+              <span className="field__label">{t('setupFirstTurn')}</span>
+              <div className="segmented">
+                <button
+                  type="button"
+                  className="segmented__item"
+                  aria-pressed={hostPosition === null}
+                  onClick={() => setHostPosition(null)}
+                >
+                  {t('setupFirstTurnRandom')}
+                </button>
+                {Array.from({ length: playerCount }, (_, index) => index + 1).map((position) => (
+                  <button
+                    key={position}
+                    type="button"
+                    className="segmented__item"
+                    aria-pressed={hostPosition === position}
+                    onClick={() => setHostPosition(position)}
+                  >
+                    {turnOrderLabel(position, lang)}
+                  </button>
+                ))}
+              </div>
+              <p className="form__note">{t('setupFirstTurnHint')}</p>
+            </div>
+          )}
 
           <div className="form__row">
             <span className="field__label">{t('setupLevel')}</span>

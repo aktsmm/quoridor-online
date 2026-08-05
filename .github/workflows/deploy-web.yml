@@ -68,14 +68,33 @@ jobs:
              exit 1
           fi
 
+          # The protocol version deliberately stays put for additive changes,
+          # so on its own it cannot tell an old server from a new one. Every
+          # optional capability the bundle knows about is checked as well, which
+          # is what actually holds this deploy back until the server has rolled.
+          features=$(sed -nE "s/^export const FEATURE_[A-Z0-9_]+ = '([^']+)';.*/\1/p" \
+             packages/web/src/net/protocol.ts)
+          echo "requiring protocol=${expected} features=[${features}]"
+
           for attempt in $(seq 1 120); do
              body=$(curl -fsS --max-time 60 "${SERVER_URL}/health" || echo '')
              actual=0
              if [ -n "$body" ]; then
                actual=$(echo "$body" | jq -r '.protocolVersion // 0' 2>/dev/null || echo 0)
              fi
-             echo "attempt ${attempt}: server protocol=${actual}, expected=${expected}"
-             if [ "$actual" -eq "$expected" ]; then
+
+             missing=''
+             for feature in $features; do
+               have=$(echo "$body" | jq -r --arg f "$feature" \
+                 'if ((.features // []) | index($f)) == null then "no" else "yes" end' \
+                 2>/dev/null || echo no)
+               if [ "$have" != "yes" ]; then
+                 missing="${missing} ${feature}"
+               fi
+             done
+
+             echo "attempt ${attempt}: server protocol=${actual}, expected=${expected}, missing=[${missing# }]"
+             if [ "$actual" -eq "$expected" ] && [ -z "$missing" ]; then
                exit 0
              fi
              sleep 15

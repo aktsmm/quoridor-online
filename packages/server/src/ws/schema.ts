@@ -59,6 +59,31 @@ const name = { type: 'string', minLength: 0, maxLength: DEFAULT_LIMITS.maxNameLe
 const code = { type: 'string', pattern: '^[0-9]{6}$' } as const;
 
 /**
+ * The host's own place in the move order, 1-based. `null` (or omitted) asks
+ * for a random draw.
+ *
+ * The real ceiling is `playerCount`, which a single bound cannot express, so
+ * this carries the widest possible range and `positionFitsTable` narrows it
+ * per table size below. `RoomManager` checks the same rule again - the client
+ * is never the authority on it.
+ */
+const hostPosition = { type: ['integer', 'null'], minimum: 1, maximum: 4 } as const;
+
+function positionFitsTable(playerCount: number): object {
+  return {
+    if: {
+      type: 'object',
+      required: ['playerCount'],
+      properties: { playerCount: { const: playerCount } },
+    },
+    then: {
+      type: 'object',
+      properties: { hostPosition: { type: ['integer', 'null'], maximum: playerCount } },
+    },
+  };
+}
+
+/**
  * One schema per message type. Everything inbound is validated before it is
  * allowed anywhere near the room state: shapes, ranges, string lengths and
  * unexpected properties are all rejected at the edge.
@@ -75,7 +100,9 @@ const schemas: Record<ClientMessage['type'], object> = {
       aiLevel: { enum: ['easy', 'normal', 'hard'] },
       fillWithCpu: { type: 'boolean' },
       name,
+      hostPosition,
     },
+    allOf: [positionFitsTable(2), positionFitsTable(3)],
   },
   'room.join': {
     type: 'object',

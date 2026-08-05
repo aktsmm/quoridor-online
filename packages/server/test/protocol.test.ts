@@ -64,6 +64,50 @@ describe('message validation', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.rid).toBe(5);
   });
+
+  describe('hostPosition', () => {
+    function create(playerCount: number, hostPosition: unknown): string {
+      return JSON.stringify({
+        type: 'room.create',
+        playerCount,
+        aiLevel: 'easy',
+        fillWithCpu: true,
+        name: 'x',
+        hostPosition,
+      });
+    }
+
+    it('accepts a whole number that fits the table, and null or nothing at all', () => {
+      const cases = [
+        create(2, 1),
+        create(2, 2),
+        create(3, 3),
+        create(4, 4),
+        create(2, null),
+        '{"type":"room.create","playerCount":2,"aiLevel":"easy","fillWithCpu":true,"name":"x"}',
+      ];
+      for (const raw of cases) {
+        const result = parseClientMessage(raw);
+        expect(result.ok, `${raw} -> ${result.ok ? '' : result.reason}`).toBe(true);
+      }
+    });
+
+    it('rejects anything outside 1..playerCount, and anything that is not an integer', () => {
+      const cases: [string, string][] = [
+        [create(2, 0), 'below the first position'],
+        [create(2, -1), 'negative'],
+        [create(2, 3), 'past a two-player table'],
+        [create(3, 4), 'past a three-player table'],
+        [create(4, 5), 'past the largest table'],
+        [create(2, 1.5), 'fractional'],
+        [create(2, '1'), 'string'],
+        [create(2, true), 'boolean'],
+      ];
+      for (const [raw, label] of cases) {
+        expect(parseClientMessage(raw).ok, label).toBe(false);
+      }
+    });
+  });
 });
 
 describe('name sanitising', () => {

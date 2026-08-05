@@ -7,7 +7,7 @@ import { RoomError, isCpuToMove, seatToMove } from '../rooms/manager.js';
 import type { RoomManager } from '../rooms/manager.js';
 import type { RoomStatus, StoredRoom } from '../rooms/record.js';
 import { fallbackMove, type AiPool } from '../ai/pool.js';
-import { PROTOCOL_VERSION, toRoomView, type ClientMessage, type RoomView, type ServerMessage } from './protocol.js';
+import { PROTOCOL_VERSION, SERVER_FEATURES, toRoomView, type ClientMessage, type RoomView, type ServerMessage } from './protocol.js';
 import { parseClientMessage, sanitiseName } from './schema.js';
 
 /** Sent when the process is going away but the client should come straight back. */
@@ -128,7 +128,12 @@ export class Hub {
       void this.#onClose(client);
     });
 
-    this.#send(client, { type: 'hello', protocolVersion: PROTOCOL_VERSION, serverTime: Date.now() });
+    this.#send(client, {
+      type: 'hello',
+      protocolVersion: PROTOCOL_VERSION,
+      serverTime: Date.now(),
+      features: SERVER_FEATURES,
+    });
   }
 
   async #onMessage(client: ClientState, raw: string): Promise<void> {
@@ -180,6 +185,7 @@ export class Hub {
           aiLevel: message.aiLevel,
           fillWithCpu: message.fillWithCpu,
           name: sanitiseName(message.name, 'Player 1'),
+          hostPosition: message.hostPosition ?? null,
         });
         this.#attach(client, grant.stored.record.roomId, grant.seatIndex);
         this.#send(client, {
