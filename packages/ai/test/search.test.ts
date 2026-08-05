@@ -9,10 +9,12 @@ import {
   tryApplyMove,
   winnerOf,
   type GameState,
+  type Goal,
   type PlayerCount,
   type Wall,
 } from '@quoridor/engine';
 import {
+  LEVEL_PROFILES,
   PathTracer,
   SearchPosition,
   TIE_BAND,
@@ -51,6 +53,18 @@ function playToCompletion(
   }
 
   return { final: state, plies };
+}
+
+/**
+ * A square exactly one step short of `goal`, on the middle of the goal line.
+ *
+ * The goal is a whole row or column, so "one step short" is the neighbouring
+ * row or column - which side of the board that is depends on which edge the
+ * goal line sits on.
+ */
+function nearGoal(goal: Goal): { c: number; r: number } {
+  const approach = goal.value === 0 ? 1 : goal.value - 1;
+  return goal.kind === 'row' ? { c: 4, r: approach } : { c: approach, r: 4 };
 }
 
 describe('wall geometry', () => {
@@ -339,6 +353,127 @@ describe('easy AI (one ply)', () => {
     for (let seed = 0; seed < 20; seed += 1) {
       expect(chooseMove({ state, level: 'easy', seed }).move.type).toBe('pawn');
     }
+  });
+});
+
+describe('multi-player search', () => {
+  // Every claim here is a regression test for a model that shipped, or nearly
+  // shipped, and lost. See the note on `chooseSearchMove`.
+
+  it('values a rival who is not leading', () => {
+    // The evaluation used to read only the *nearest* opponent. In a 3-player
+    // game that is blind: once the leader is out of reach, nothing I do to the
+    // player I am actually racing for second place changes my score at all, and
+    // a wall spent on them is scored as a pure loss. Second place is worth a
+    // full place, so this is not a rounding detail.
+    const base = createGame({ playerCount: 3 });
+    // Seat 1 is one step from home in both positions, so it is always the
+    // nearest rival and `min` is pinned to it.
+    const withRival = (pos: { c: number; r: number }): GameState => ({
+      ...base,
+      players: [
+        base.players[0]!,
+        { ...base.players[1]!, pos: nearGoal(base.players[1]!.goal) },
+        { ...base.players[2]!, pos },
+      ],
+    });
+
+    const chasing = SearchPosition.from(withRival(nearGoal(base.players[2]!.goal)));
+    const trailing = SearchPosition.from(withRival(base.players[2]!.pos));
+
+    expect(chasing.distance(1)).toBe(1);
+    expect(trailing.distance(1)).toBe(1);
+    expect(chasing.distance(2)).toBe(1);
+    expect(trailing.distance(2)).toBeGreaterThan(1);
+    expect(chasing.distance(0)).toBe(trailing.distance(0));
+
+    // The two positions are indistinguishable to `min(rival distance)` - it is
+    // 1 in both - yet in one of them I am beaten to second place and in the
+    // other I am not.
+    expect(Math.min(chasing.distance(1), chasing.distance(2))).toBe(
+      Math.min(trailing.distance(1), trailing.distance(2)),
+    );
+    expect(evaluate(trailing, 0)).toBeGreaterThan(evaluate(chasing, 0));
+  });
+
+  it('answers the most dangerous rival, not merely the next one to move', () => {
+    // Best-reply search lets whichever opponent has the sharpest answer play it,
+    // instead of walking the seats in turn order. That is what lets a shallow
+    // search see a threat owned by the player who moves *last* in the round.
+    // A turn-ordered search needs a full extra round to reach the same move.
+    const base = createGame({ playerCount: 3 });
+    const state: GameState = {
+      ...base,
+      players: [
+        base.players[0]!,
+        base.players[1]!,
+        base.players[2]!,
+      ],
+    };
+
+    // Put the seat that moves last one step from home, and check the fixture is
+    // really what the test claims before asserting anything about the search.
+    const threatened = 2;
+    const goal = state.players[threatened]!.goal;
+    const oneStepShort = nearGoal(goal);
+    const loaded: GameState = {
+      ...state,
+      players: state.players.map((player, seat) =>
+        seat === threatened ? { ...player, pos: oneStepShort } : player,
+      ),
+    };
+    const position = SearchPosition.from(loaded);
+    expect(position.distance(threatened)).toBe(1);
+    expect(loaded.turn).toBe(0);
+
+    // Two plies is one move of mine and one reply. Only a best-reply node can
+    // fit the dangerous seat's winning move into that reply.
+    const decision = chooseSearchMove(SearchPosition.from(loaded), 0, {
+      timeBudgetMs: 10_000,
+      now: () => performance.now(),
+      rng: makeRng(4),
+      maxDepth: 2,
+    });
+    const after = tryApplyMove(loaded, decision.move);
+    expect(after.ok).toBe(true);
+    if (!after.ok) return;
+    expect(SearchPosition.from(after.state).distance(threatened)).toBeGreaterThan(1);
+  }, 30_000);
+
+  it('still outsearches the middle level with three and four players', () => {
+    // Max^n was measured here and rejected for exactly this: with no cutoff it
+    // reached depth 3 at a 500 ms budget with either player count, which is the
+    // *middle* level's depth cap. The top level did not lose to the middle level
+    // so much as turn into it, and the ladder collapsed to a tie.
+    //
+    // 500 ms is enough on an idle machine (it reaches depth 5), but the suite
+    // runs test files in parallel, so the budget here is deliberately loose:
+    // the claim is "deeper than the middle level", not "this fast".
+    for (const playerCount of [3, 4] as PlayerCount[]) {
+      const state = createGame({ playerCount });
+      const decision = chooseMove({ state, level: 'hard', seed: 5, timeBudgetMs: 4_000 });
+      expect(
+        decision.depth,
+        `only reached depth ${decision.depth} with ${playerCount} players`,
+      ).toBeGreaterThan(LEVEL_PROFILES.normal.maxDepth ?? Number.POSITIVE_INFINITY);
+    }
+  }, 60_000);
+
+  it('leaves the two-player evaluation exactly antisymmetric', () => {
+    // With a single rival a sum over opponents and a minimum over opponents are
+    // the same number, which is what makes all of the above free of charge in a
+    // two-player game. If that ever stops being true this test fails first.
+    const state = createGame({ playerCount: 2 });
+    const position = SearchPosition.from(state);
+    expect(evaluate(position, 0) + evaluate(position, 1)).toBe(0);
+
+    const nudged: GameState = {
+      ...state,
+      players: [{ ...state.players[0]!, pos: { c: 4, r: 1 } }, state.players[1]!],
+    };
+    const moved = SearchPosition.from(nudged);
+    expect(evaluate(moved, 0) + evaluate(moved, 1)).toBe(0);
+    expect(evaluate(moved, 0)).toBeGreaterThan(evaluate(position, 0));
   });
 });
 

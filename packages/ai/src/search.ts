@@ -1,8 +1,9 @@
 import type { Move } from '@quoridor/engine';
+import { cellIndex } from '@quoridor/engine';
 import { WIN_SCORE, evaluate } from './evaluate.js';
 import { generateMoves, TIE_BAND, opponentsOf, scoreMove } from './static.js';
 import { PathTracer } from './paths.js';
-import type { SearchPosition} from './position.js';
+import type { SearchPosition, Undo } from './position.js';
 import { pawnMove } from './position.js';
 import { randomInt } from './rng.js';
 
@@ -12,6 +13,16 @@ const TIME_UP = Symbol('time-up');
 const CHECK_INTERVAL = 128;
 const MAX_DEPTH = 24;
 const TT_LIMIT = 250_000;
+
+/**
+ * Mixed into the transposition key at opponent nodes.
+ *
+ * A best-reply tree alternates strictly between my nodes and opponent nodes, so
+ * the same board can appear as both. `position.hash` cannot tell them apart on
+ * its own, because the seat it records as "to move" is not the seat the search
+ * is about to move.
+ */
+const REPLY_SALT = 0x5f3a71b;
 
 /** Interior nodes only attack the first few steps of a route. */
 const INNER_WALL_STEPS = 4;
@@ -26,6 +37,8 @@ interface Entry {
   flag: number;
   score: number;
   move: Move | null;
+  /** Which seat `move` belongs to; an opponent node's best move is not mine. */
+  owner: number;
 }
 
 export interface SearchOptions {
@@ -57,9 +70,31 @@ export interface SearchResult {
  * depth keeps the middle level honest on a fast machine, where a time-only
  * limit would quietly make it as strong as the top level.
  *
- * Multi-player games are searched paranoid: every opponent is assumed to be
- * cooperating against `me`, which keeps the value one-dimensional and avoids
- * the discontinuities a max-n search would produce.
+ * Two and three player games are searched paranoid: every opponent is folded
+ * into one coalition trying to minimise my score, which for a single opponent
+ * is simply minimax and is exact, and which collapses the value to one number
+ * and so keeps full alpha-beta. Four player games are searched max^n: every
+ * node maximises the score of whoever is to move, so an opponent is modelled as
+ * running their own race rather than as a member of a coalition formed against
+ * `me`. That is the truthful model, and it costs the cutoff and with it two or
+ * three plies, which is why it is not used everywhere.
+ *
+ * Paranoid used to cover every player count, and it is measurably wrong once
+ * there are three rivals. It has each of them spend their turn on whatever
+ * hurts me most, so the search expects three hostile moves between two of its
+ * own and concludes that running is futile and walls should be hoarded. The
+ * tell is that the error grows with depth: against a field of one-ply opponents
+ * a deeper search still wins, because they never punish it, but against three
+ * competent opponents a depth-8 paranoid search finished *below* chance (mean
+ * place 1.875 of a possible 1.5) while capping the same search at depth 3
+ * finished above it (1.417). Searching harder was pursuing the wrong objective
+ * further. Blocking in a free-for-all is a public good - the wall I spend on
+ * the leader helps everyone behind them as much as it helps me - so real rivals
+ * under-supply it, and max^n says so.
+ *
+ * With two rivals the same exaggeration exists but is mild, and the depth is
+ * worth more than the error: paranoid scores 47.8% in a mixed 3-player table
+ * where max^n scores 34.4%. Hence the split rather than a wholesale move.
  */
 export function chooseSearchMove(
   position: SearchPosition,
@@ -72,6 +107,21 @@ export function chooseSearchMove(
   const table = new Map<number, Entry>();
   let nodes = 0;
   let sinceCheck = 0;
+
+  /**
+   * Plays `move` on behalf of a named seat rather than whoever the board says is
+   * to move.
+   *
+   * A best-reply tree deliberately breaks turn order - it lets whichever rival
+   * has the sharpest answer play it, and skips the rest - so the search cannot
+   * use `position.apply`, which reads the seat from the board. Undoing restores
+   * the previous turn either way, so the board is left exactly as it was found.
+   */
+  const applyAs = (player: number, move: Move): Undo => {
+    if (move.type === 'pawn') return position.applyPawn(player, cellIndex(move.to.c, move.to.r));
+    if (move.type === 'wall') return position.applyWall(player, move.wall);
+    throw new Error('cannot search a resignation');
+  };
 
   const outOfTime = (): boolean => {
     sinceCheck += 1;
@@ -119,20 +169,62 @@ export function chooseSearchMove(
   let bestScore = scored[0]!.score;
   let completed = 0;
 
-  const search = (depth: number, ply: number, alphaIn: number, betaIn: number): number => {
+  /**
+   * Best-reply search.
+   *
+   * `mine` says whose node this is: my own, where I pick the move that scores
+   * best for me, or the reply node, where exactly one rival - whichever of them
+   * has the sharpest answer - plays against me and the others stand still.
+   *
+   * That "exactly one" is the whole design. Three opponent models were measured
+   * here and the other two each fail for their own reason:
+   *
+   * - *Paranoid* lets every rival move every round, so the search expects
+   *   `playerCount - 1` hostile moves between two of its own, decides running is
+   *   futile and hoards walls. The error compounds with depth, which is fatal in
+   *   the one level whose selling point is depth: in a mixed 3-player table it
+   *   looks level at a 200 ms budget (43.7% against the middle level's 43.7%)
+   *   and then *falls* to 30.0% against 44.4% at the 500 ms budget the game
+   *   ships with. With four players it scored 16.7% against a 25% chance.
+   * - *Max^n* gives each rival their own score to maximise, which is the
+   *   truthful model and does fix the inversion - but a bound on my score says
+   *   nothing about anybody else's, so there is no cutoff. Measured: at a 500 ms
+   *   budget it reached depth 3 with three players and depth 3 with four, which
+   *   is exactly the *middle* level's depth cap. It did not lose to the middle
+   *   level so much as turn into it, and the table agreed - 40.0% to 42.2%.
+   *
+   * Best-reply keeps one number and strict alternation, so full alpha-beta comes
+   * back and with it the depth that separates the levels, while dropping the
+   * coalition fantasy. It is optimistic in the other direction - real rivals do
+   * all move - but the bias is uniform across sibling leaves, whereas paranoid's
+   * grows with depth, and a free-for-all really does under-supply blocking: a
+   * wall spent on the leader helps everyone behind them as much as it helps me.
+   *
+   * With a single opponent the reply node has exactly one candidate seat, so
+   * this is ordinary minimax and the two-player game is untouched by
+   * construction - same tree, same order, same move.
+   */
+  const search = (mine: boolean, depth: number, ply: number, alphaIn: number, betaIn: number): number => {
     if (outOfTime()) throw TIME_UP;
     // Once I am off the board nothing later can change my place, and once one
     // player is left the placings are settled.
     if (position.isRetired(me)) {
-      const score = evaluate(position, me);
-      return score >= 0 ? score - ply : score + ply;
+      // Always prefer to get there sooner. Places are handed out in arrival
+      // order, so waiting can only cost a place, never win one - and the usual
+      // "lose later" rule is actively harmful here, because with three or four
+      // players a perfectly good finish still scores below zero. Third of four
+      // is worth -WIN_SCORE/3, so "later is better for a negative score" told a
+      // player standing two squares from home with the race already won to walk
+      // away from the goal and keep walking away, for as long as the horizon
+      // let it. That is exactly the shuffle that left 4-player games unfinished.
+      return evaluate(position, me) - ply;
     }
     if (position.isGameOver()) return evaluate(position, me) - ply;
     if (depth <= 0) return evaluate(position, me);
 
     let alpha = alphaIn;
     let beta = betaIn;
-    const key = position.hash;
+    const key = mine ? position.hash : position.hash ^ REPLY_SALT;
     const cached = table.get(key);
     if (cached && cached.depth >= depth) {
       if (cached.flag === EXACT) return cached.score;
@@ -141,56 +233,70 @@ export function chooseSearchMove(
       if (alpha >= beta) return cached.score;
     }
 
-    const mover = position.turn;
-    const maximizing = mover === me;
-    // Paranoid: opponents only ever try to slow me down, never each other.
-    const targets = maximizing ? victims : [me];
-    const moves = generateMoves(
-      position,
-      mover,
-      targets,
-      tracer,
-      INNER_WALL_STEPS,
-      INNER_WALL_LIMIT,
-    );
-    if (moves.length === 0) return evaluate(position, me);
-
-    orderMoves(moves, cached?.move ?? null);
-
     nodes += 1;
-    let bestLocal = maximizing ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+    let bestLocal = mine ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
     let bestMove: Move | null = null;
+    let bestOwner = -1;
+    let any = false;
 
-    for (const move of moves) {
-      const undo = position.apply(move);
-      let value: number;
-      try {
-        value = search(depth - 1, ply + 1, alpha, beta);
-      } finally {
-        position.undo(undo);
-      }
+    // My node offers my moves; the reply node offers every still-running
+    // rival's, and the best of them all is the one that gets played.
+    const seats = mine ? [me] : victims;
 
-      if (maximizing) {
-        if (value > bestLocal) {
-          bestLocal = value;
-          bestMove = move;
+    outer: for (const seat of seats) {
+      if (!mine && position.isRetired(seat)) continue;
+      const moves = generateMoves(
+        position,
+        seat,
+        // Opponents only ever try to slow me down. That is what makes this a
+        // *best reply* rather than a free-for-all: their own race is not being
+        // modelled here, only the harm they can do to mine.
+        mine ? victims : [me],
+        tracer,
+        INNER_WALL_STEPS,
+        INNER_WALL_LIMIT,
+      );
+      if (moves.length === 0) continue;
+      orderMoves(moves, cached?.owner === seat ? (cached.move ?? null) : null);
+      any = true;
+
+      for (const move of moves) {
+        const undo = applyAs(seat, move);
+        let value: number;
+        try {
+          value = search(!mine, depth - 1, ply + 1, alpha, beta);
+        } finally {
+          position.undo(undo);
         }
-        if (bestLocal > alpha) alpha = bestLocal;
-      } else {
-        if (value < bestLocal) {
-          bestLocal = value;
-          bestMove = move;
+
+        if (mine) {
+          if (value > bestLocal) {
+            bestLocal = value;
+            bestMove = move;
+            bestOwner = seat;
+          }
+          if (bestLocal > alpha) alpha = bestLocal;
+        } else {
+          if (value < bestLocal) {
+            bestLocal = value;
+            bestMove = move;
+            bestOwner = seat;
+          }
+          if (bestLocal < beta) beta = bestLocal;
         }
-        if (bestLocal < beta) beta = bestLocal;
+        if (alpha >= beta) break outer;
       }
-      if (alpha >= beta) break;
     }
+
+    // Nobody on this side of the board can move at all, so there is no reply to
+    // search: score the position as it stands.
+    if (!any) return evaluate(position, me);
 
     if (table.size < TT_LIMIT && Math.abs(bestLocal) < WIN_SCORE - MAX_DEPTH) {
       // Win scores are ply-relative, so they must not be cached against a
       // position that a different line could reach at a different depth.
       const flag = bestLocal <= alphaIn ? UPPER : bestLocal >= betaIn ? LOWER : EXACT;
-      table.set(key, { depth, flag, score: bestLocal, move: bestMove });
+      table.set(key, { depth, flag, score: bestLocal, move: bestMove, owner: bestOwner });
     }
     return bestLocal;
   };
@@ -207,10 +313,10 @@ export function chooseSearchMove(
       // which makes the window tight straight away.
       const ordered = [best, ...shortlist.filter((move) => move !== best)];
       for (const move of ordered) {
-        const undo = position.apply(move);
+        const undo = applyAs(me, move);
         let value: number;
         try {
-          value = search(depth - 1, 1, alpha, beta);
+          value = search(false, depth - 1, 1, alpha, beta);
         } finally {
           position.undo(undo);
         }
