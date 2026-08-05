@@ -70,31 +70,12 @@ export interface SearchResult {
  * depth keeps the middle level honest on a fast machine, where a time-only
  * limit would quietly make it as strong as the top level.
  *
- * Two and three player games are searched paranoid: every opponent is folded
- * into one coalition trying to minimise my score, which for a single opponent
- * is simply minimax and is exact, and which collapses the value to one number
- * and so keeps full alpha-beta. Four player games are searched max^n: every
- * node maximises the score of whoever is to move, so an opponent is modelled as
- * running their own race rather than as a member of a coalition formed against
- * `me`. That is the truthful model, and it costs the cutoff and with it two or
- * three plies, which is why it is not used everywhere.
- *
- * Paranoid used to cover every player count, and it is measurably wrong once
- * there are three rivals. It has each of them spend their turn on whatever
- * hurts me most, so the search expects three hostile moves between two of its
- * own and concludes that running is futile and walls should be hoarded. The
- * tell is that the error grows with depth: against a field of one-ply opponents
- * a deeper search still wins, because they never punish it, but against three
- * competent opponents a depth-8 paranoid search finished *below* chance (mean
- * place 1.875 of a possible 1.5) while capping the same search at depth 3
- * finished above it (1.417). Searching harder was pursuing the wrong objective
- * further. Blocking in a free-for-all is a public good - the wall I spend on
- * the leader helps everyone behind them as much as it helps me - so real rivals
- * under-supply it, and max^n says so.
- *
- * With two rivals the same exaggeration exists but is mild, and the depth is
- * worth more than the error: paranoid scores 47.8% in a mixed 3-player table
- * where max^n scores 34.4%. Hence the split rather than a wholesale move.
+ * Every player count is searched the same way, as a *best reply* tree: my nodes
+ * offer my moves, and a reply node offers every still-running rival's moves and
+ * plays the single best of them. See the comment on `search` below for why, and
+ * for what the two alternatives - paranoid and max^n - were measured to cost.
+ * With one rival the reply node has exactly one candidate seat, so the whole
+ * thing degenerates to ordinary minimax and the two-player game is untouched.
  */
 export function chooseSearchMove(
   position: SearchPosition,

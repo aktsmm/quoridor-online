@@ -4,16 +4,30 @@ export const WIN_SCORE = 1_000_000;
 
 /**
  * Maps a finishing place (0 = first) onto a score that runs from `+WIN_SCORE`
- * for first down to `-WIN_SCORE` for last, so a two-player loss is as bad as a
- * win is good and every extra place in between is worth the same.
+ * for first down to `-WIN_SCORE` for last.
  *
  * Fractional places are allowed: an unfinished game is scored at the place the
  * player would land on average, which puts the heuristic terms on the same
  * axis as the terminal ones instead of a wholly different scale.
+ *
+ * With three or more players the curve is deliberately **not** linear. A linear
+ * scale makes second place at 3 players worth exactly the average of first and
+ * last, so the search is indifferent between banking a certain second and
+ * flipping a coin for the win - and it banks the second. Measured against two
+ * `normal`s it finished second in 68.6% of games and first in 20.6%, below the
+ * 33.3% its seat is worth, while still beating the field on mean place. Someone
+ * who picks the strongest CPU wants it to play for the win, so `q^0.5` pulls
+ * every place except first down towards last and makes winning worth more than
+ * the places it risks.
+ *
+ * Two players keep the linear form exactly, which is what leaves the 2-player
+ * engine - where the curve has no interior points anyway - bit for bit unchanged.
  */
 export function placeValue(place: number, playerCount: number): number {
   if (playerCount < 2) return WIN_SCORE;
-  return (WIN_SCORE * (playerCount - 1 - 2 * place)) / (playerCount - 1);
+  if (playerCount === 2) return WIN_SCORE * (1 - 2 * place);
+  const q = Math.min(1, Math.max(0, place / (playerCount - 1)));
+  return WIN_SCORE * (1 - 2 * Math.sqrt(q));
 }
 
 /**
@@ -106,66 +120,6 @@ export function rivalEdge(gap: number): number {
 }
 
 /** Distance-only view, used by the simpler levels. */
-
-/**
- * Every player's score at once, in seat order.
- *
- * Identical to calling `evaluate` once per player, but each player's route is
- * traced once instead of once per point of view. That matters because the
- * multi-player search reads the whole vector at every leaf: done naively it
- * would cost `playerCount` times as many shortest-path searches as the
- * two-player one, and the depth lost to that would undo the reason for keeping
- * the vector in the first place.
- */
-export function evaluateAll(position: SearchPosition): number[] {
-  const players = position.playerCount;
-  const distances = new Array<number>(players);
-  for (let p = 0; p < players; p += 1) {
-    distances[p] = position.isRetired(p) ? -1 : position.distance(p);
-  }
-
-  const over = position.isGameOver();
-  const settled = placeValue(position.finishedCount, players);
-  const expected = placeValue(
-    position.finishedCount + (position.activeCount - 1) / 2,
-    players,
-  );
-
-  const out = new Array<number>(players);
-  for (let me = 0; me < players; me += 1) {
-    if (position.isRetired(me)) {
-      const rank = position.goalRank[me] ?? -1;
-      out[me] = rank < 0 ? -WIN_SCORE : placeValue(rank, players);
-      continue;
-    }
-    if (over) {
-      out[me] = settled;
-      continue;
-    }
-    const myDistance = distances[me]!;
-    if (myDistance < 0) {
-      out[me] = -WIN_SCORE;
-      continue;
-    }
-
-    let race = 0;
-    let opponentWalls = 0;
-    let opponentCount = 0;
-    for (let i = 0; i < players; i += 1) {
-      if (i === me || position.isRetired(i)) continue;
-      const d = distances[i]!;
-      if (d >= 0) race += rivalEdge(d - myDistance);
-      opponentWalls += position.wallsLeft[i]!;
-      opponentCount += 1;
-    }
-    if (opponentCount === 0) {
-      out[me] = settled;
-      continue;
-    }
-    out[me] = expected + race * STEP_VALUE + (position.wallsLeft[me]! - opponentWalls / opponentCount);
-  }
-  return out;
-}
 
 export function distanceAdvantage(position: SearchPosition, me: number): number {
   const myDistance = position.distance(me);

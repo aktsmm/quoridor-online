@@ -17,16 +17,29 @@ function goal(player: number, ply: number): CompletionRecord {
 }
 
 describe('placings on the score scale', () => {
-  it('runs from a win down to last place, evenly spaced', () => {
+  it('runs from a win down to last place, with winning worth the most', () => {
+    // Two players have no interior place, so the scale stays linear there and
+    // the two-player engine is untouched.
     expect(placeValue(0, 2)).toBe(WIN_SCORE);
     expect(placeValue(1, 2)).toBe(-WIN_SCORE);
+    expect(placeValue(0.5, 2)).toBe(0);
 
     const four = [0, 1, 2, 3].map((p) => placeValue(p, 4));
     expect(four[0]).toBe(WIN_SCORE);
     expect(four[3]).toBe(-WIN_SCORE);
-    // Strictly worse each step, and every step the same size.
-    expect(four[0]! - four[1]!).toBeCloseTo(four[1]! - four[2]!, 6);
-    expect(four[1]! - four[2]!).toBeCloseTo(four[2]! - four[3]!, 6);
+    // Strictly worse each step...
+    expect(four[0]!).toBeGreaterThan(four[1]!);
+    expect(four[1]!).toBeGreaterThan(four[2]!);
+    expect(four[2]!).toBeGreaterThan(four[3]!);
+    // ...and the first step is the biggest, so giving up the win costs more
+    // than any place below it. An evenly spaced scale makes the top level bank
+    // a safe second instead of playing for first.
+    expect(four[0]! - four[1]!).toBeGreaterThan(four[1]! - four[2]!);
+    expect(four[1]! - four[2]!).toBeGreaterThan(four[2]! - four[3]!);
+
+    // Three players: a certain second must be worse than a coin flip between
+    // first and last, which is exactly the preference the linear scale lacked.
+    expect(placeValue(1, 3)).toBeLessThan((placeValue(0, 3) + placeValue(2, 3)) / 2);
   });
 
   it('scores a two-player loss as badly as a win scores well', () => {
