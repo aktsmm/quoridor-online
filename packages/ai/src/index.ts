@@ -15,7 +15,7 @@ export * from './types.js';
 export { SearchPosition, cellToPos, pawnMove, ALL_WALLS } from './position.js';
 export { evaluate, distanceAdvantage, placeValue, WIN_SCORE } from './evaluate.js';
 export { chooseGreedyMove, bestStepTowardsGoal } from './greedy.js';
-export { chooseStaticMove, generateMoves, opponentsOf, scoreMove, scoreMoves, nearTies, pickNearTie, TIE_BAND } from './static.js';
+export { chooseStaticMove, generateMoves, opponentsOf, scoreMove, scoreMoves, nearTies, pickNearTie, TIE_BAND, tieBand } from './static.js';
 export { chooseSearchMove, type SearchOptions, type SearchResult } from './search.js';
 export { PathTracer } from './paths.js';
 export { pathWallCandidates, wallsBlockingStep, wallOrdinal } from './candidates.js';

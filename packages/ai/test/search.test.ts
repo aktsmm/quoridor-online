@@ -27,9 +27,11 @@ import {
   pathWallCandidates,
   scoreMove,
   scoreMoves,
+  tieBand,
   wallsBlockingStep,
   type AiLevel,
 } from '../src/index.js';
+import { STEP_VALUE } from '../src/evaluate.js';
 
 function playToCompletion(
   level: AiLevel,
@@ -353,6 +355,45 @@ describe('easy AI (one ply)', () => {
     for (let seed = 0; seed < 20; seed += 1) {
       expect(chooseMove({ state, level: 'easy', seed }).move.type).toBe('pawn');
     }
+  });
+
+  it('widens the tie band with the rival count, and not at two players', () => {
+    // The band exists to make "walk forward" and "wall that costs a rival a
+    // step" comparable. `evaluate` sums the race term over every rival, so
+    // walking forward is worth a step *per rival* while the wall still moves
+    // one of them: the pair is 1 apart at two players, 11 at three, 21 at four.
+    // A fixed band stops catching it above two, which is the bug this fixes.
+    expect(tieBand(1)).toBe(TIE_BAND);
+    expect(tieBand(2)).toBe(STEP_VALUE + TIE_BAND);
+    expect(tieBand(3)).toBe(2 * STEP_VALUE + TIE_BAND);
+    // One rival is the two-player case, so two-player play is unchanged by
+    // construction rather than by measurement. Guarded here on purpose.
+    expect(tieBand(1)).toBe(1);
+    expect(tieBand(0)).toBe(TIE_BAND);
+  });
+
+  it('still places walls above two players', () => {
+    // Regression. With a fixed band, the one-ply level went from 7.8 walls per
+    // seat at two players to 3.1 at three and *zero* at four - 200 games and
+    // some 6000 decisions without a single wall, finishing in 30 plies because
+    // every seat simply sprinted.
+    for (const playerCount of [2, 3, 4] as PlayerCount[]) {
+      let walls = 0;
+      const games = 6;
+      for (let game = 0; game < games; game += 1) {
+        walls += playToCompletion('easy', game * 7919 + playerCount, playerCount).final.walls
+          .length;
+      }
+      expect(walls, `${playerCount} players placed ${walls} walls in ${games} games`).toBeGreaterThanOrEqual(games);
+    }
+  }, 60_000);
+
+  it('leaves the search root band narrow', () => {
+    // `search.ts` shortlists its root with the *constant*, deliberately: the
+    // rival-scaled band would pull a large head into `shuffleHead`, reorder the
+    // root, weaken alpha-beta and cost depth. Scaling belongs to the one-ply
+    // engine alone, so pin the constant against a well-meant "fix" upstream.
+    expect(TIE_BAND).toBe(1);
   });
 });
 

@@ -1,5 +1,5 @@
 import { type Move } from '@quoridor/engine';
-import { evaluate } from './evaluate.js';
+import { evaluate, STEP_VALUE } from './evaluate.js';
 import { pathWallCandidates } from './candidates.js';
 import { PathTracer } from './paths.js';
 import type { SearchPosition} from './position.js';
@@ -25,8 +25,37 @@ const STATIC_WALL_LIMIT = 64;
  *
  * The band is narrower than one step, so no move that actually concedes
  * distance can enter it.
+ *
+ * This constant is the **two-player** width. `tieBand` below generalises it;
+ * `search.ts` keeps using the constant, because its root shortlist wants a
+ * genuinely narrow band and widening that would reorder the root and cost depth.
  */
 export const TIE_BAND = 1;
+
+/**
+ * The same band, in the units the evaluation actually uses today.
+ *
+ * The reasoning above is stated for a race term of `min(rival distance) - my
+ * distance`. Under a minimum, walking forward moves the minimum by one step and
+ * scores +10, exactly one point above a wall that costs the leader a step (+10
+ * for the step, -1 for the wall). A band of one catches that pair.
+ *
+ * `evaluate` now **sums** the race term over every rival, because a finishing
+ * place is a count of the players who get home first. That multiplies walking
+ * forward by the number of rivals - +10(n-1) - while a wall still slows one
+ * rival and is still worth +9. The gap becomes 1, 11 and 21 at two, three and
+ * four players, so a fixed band of one stops catching anything above two and the
+ * one-ply level silently stops placing walls: measured at 7.8 walls per seat at
+ * two players, 3.1 at three and **0.0** at four, where 200 games produced not a
+ * single wall and finished in 30 plies.
+ *
+ * Scaling the band by the same factor restores the property it was written for.
+ * At one rival `rivals - 1` is zero, so this is *identical* to `TIE_BAND` and
+ * two-player play is unchanged by construction, not by measurement.
+ */
+export function tieBand(rivals: number): number {
+  return STEP_VALUE * Math.max(0, rivals - 1) + TIE_BAND;
+}
 
 export interface ScoredMove {
   readonly move: Move;
@@ -104,13 +133,16 @@ const WALL_PLAN_WEIGHT = 0.2;
 /**
  * The moves worth choosing between: the best one, plus anything the evaluation
  * cannot really tell apart from it. `scored` is not required to be sorted.
+ *
+ * `band` defaults to the two-player width so existing callers are unaffected;
+ * callers that know the rival count should pass `tieBand(rivals)`.
  */
-export function nearTies(scored: readonly ScoredMove[]): ScoredMove[] {
+export function nearTies(scored: readonly ScoredMove[], band = TIE_BAND): ScoredMove[] {
   let best = Number.NEGATIVE_INFINITY;
   for (const entry of scored) {
     if (entry.score > best) best = entry.score;
   }
-  return scored.filter((entry) => entry.score >= best - TIE_BAND);
+  return scored.filter((entry) => entry.score >= best - band);
 }
 
 /**
@@ -122,8 +154,12 @@ export function nearTies(scored: readonly ScoredMove[]): ScoredMove[] {
  * dumps its whole supply in the opening. So the plan is drawn first, then a
  * member of it uniformly.
  */
-export function pickNearTie(scored: readonly ScoredMove[], rng: () => number): Move {
-  const candidates = nearTies(scored);
+export function pickNearTie(
+  scored: readonly ScoredMove[],
+  rng: () => number,
+  band = TIE_BAND,
+): Move {
+  const candidates = nearTies(scored, band);
   const pawns = candidates.filter((entry) => entry.move.type === 'pawn');
   const walls = candidates.filter((entry) => entry.move.type === 'wall');
   if (pawns.length === 0) return walls[randomInt(rng, walls.length)]!.move;
@@ -157,5 +193,5 @@ export function chooseStaticMove(
   );
   if (moves.length === 0) throw new Error('no legal move available');
 
-  return pickNearTie(scoreMoves(position, me, moves), rng);
+  return pickNearTie(scoreMoves(position, me, moves), rng, tieBand(victims.length));
 }
