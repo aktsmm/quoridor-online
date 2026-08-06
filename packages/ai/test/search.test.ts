@@ -24,6 +24,7 @@ import {
   evaluate,
   generateMoves,
   makeRng,
+  opponentsOf,
   pathWallCandidates,
   scoreMove,
   scoreMoves,
@@ -394,6 +395,60 @@ describe('easy AI (one ply)', () => {
     // root, weaken alpha-beta and cost depth. Scaling belongs to the one-ply
     // engine alone, so pin the constant against a well-meant "fix" upstream.
     expect(TIE_BAND).toBe(1);
+  });
+
+  it('narrows the band again as players retire, in step with the evaluation', () => {
+    // `tieBand` is only correct because its argument counts exactly the players
+    // `evaluate` sums the race term over. Those are two separate conditions in
+    // two files and nothing but this test holds them together:
+    //
+    //   static.ts   `opponentsOf`: i !== me && !position.isRetired(i)
+    //   evaluate.ts the race loop: i === me || position.isRetired(i) -> skip
+    //
+    // They must stay complementary. If `opponentsOf` ever starts counting
+    // retired seats, a 4-player endgame with two players home is really 1v1,
+    // but the band stays at 21 - wide enough to swallow a whole square - and
+    // the one-ply level goes back to scattering walls at random. Every other
+    // test in this file would still pass, which is why this one exists.
+    const base = createGame({ playerCount: 4 });
+    const home = (seat: number): GameState['players'][number] => ({
+      ...base.players[seat]!,
+      pos: nearGoal(base.players[seat]!.goal),
+    });
+    const endgame: GameState = {
+      ...base,
+      players: [base.players[0]!, home(1), home(2), base.players[3]!],
+      completions: [
+        { player: 1, kind: 'goal', ply: 10 },
+        { player: 2, kind: 'goal', ply: 12 },
+      ],
+    };
+    const position = SearchPosition.from(endgame);
+
+    // Check the fixture is the endgame it claims to be before asserting on it.
+    expect(position.isRetired(1)).toBe(true);
+    expect(position.isRetired(2)).toBe(true);
+    expect(position.activeCount).toBe(2);
+
+    // Forwards: two of the four seats are gone, so one rival is left and the
+    // band is back to the two-player width it was tuned for.
+    expect(opponentsOf(position, 0)).toEqual([3]);
+    expect(tieBand(opponentsOf(position, 0).length)).toBe(TIE_BAND);
+
+    // Backwards: `evaluate` must be summing over that same set. A retired pawn
+    // is off the board, so dragging it away from its goal has to change nothing
+    // - if the race loop counted it, this score would move.
+    const before = evaluate(position, 0);
+    const strayed: GameState = {
+      ...endgame,
+      players: [
+        endgame.players[0]!,
+        { ...endgame.players[1]!, pos: base.players[1]!.pos },
+        endgame.players[2]!,
+        endgame.players[3]!,
+      ],
+    };
+    expect(evaluate(SearchPosition.from(strayed), 0)).toBe(before);
   });
 });
 
